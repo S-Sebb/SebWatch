@@ -3,7 +3,8 @@
 
 use std::path::Path;
 
-use sebwatch_core::memory::{read, CGROUP_ROOT, PROC_ROOT};
+use sebwatch_core::memory::read;
+use sebwatch_core::memory::{CGROUP_ROOT, PROC_ROOT};
 
 fn main() -> std::io::Result<()> {
     let m = read(Path::new(CGROUP_ROOT), Path::new(PROC_ROOT))?;
