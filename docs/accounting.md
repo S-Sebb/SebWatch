@@ -10,10 +10,12 @@ On a systemd desktop every launched app runs in its own cgroup v2 group: a scope
 (`app-steam@autostart.service`, `emulator-guide35.service`). Child processes stay in their
 parent's group, so a build an agent starts is charged to that agent.
 
-- **Leaves**: walk `/sys/fs/cgroup` and keep every populated group with `memory.stat` whose
-  children have none, skipping the root (its counters are system-wide; its own processes are
-  kernel threads). A child without the memory controller is charged to its parent, so these
-  leaves count every process outside the root once.
+- **Leaves**: walk `/sys/fs/cgroup` once (`crates/core/src/cgroup.rs`, shared by memory, CPU
+  and disk) and keep every group whose `cgroup.procs` is non-empty, skipping the root (its
+  counters are system-wide; its own processes are kernel threads). Memory is read from the
+  nearest of these groups or their ancestors that has `memory.stat` (a child without the memory
+  controller, such as `systemd-udevd.service/udev`, is charged to its parent), each such group
+  once.
 - **Grouping**: several groups can belong to one app (each Claude agent gets its own scope,
   T3 Code has an AppImage service and a scope). Group them by a cleaned name: strip the
   `.scope/.service/.slice` suffix, the template instance (`@autostart`, `@<id>`), the `app-`,

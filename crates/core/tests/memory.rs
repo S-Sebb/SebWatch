@@ -23,6 +23,14 @@ fn fixture_sums_exactly_to_mem_total() {
         ]
     );
     assert_eq!(m.apps[2].cgroups.len(), 2);
+    // The emulator's processes sit in a child without the memory controller: charged to the
+    // service, listed under the child (the key CPU and disk use).
+    assert_eq!(
+        m.apps[0].cgroups,
+        [Path::new(
+            "user.slice/app.slice/emulator-guide35.service/qemu"
+        )]
+    );
 
     assert_eq!(m.total, 102_400);
     assert_eq!(m.free, 51_200);

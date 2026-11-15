@@ -25,55 +25,31 @@ pub struct Rates {
     pub write_bytes_per_sec: f64,
 }
 
-/// Reads the counters of every group under `root` that has processes, skipping the root itself
-/// (its counters are system-wide).
+/// Reads the counters of every group under `root` that has processes (see
+/// [`crate::cgroup::groups_with_processes`]). A group that vanishes mid-read is left out.
 pub fn read_sample(root: &Path) -> io::Result<Sample> {
     let mut sample = Sample::new();
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            walk(root, &entry.path(), &mut sample);
-        }
+    for rel in crate::cgroup::groups_with_processes(root)? {
+        let dir = root.join(&rel);
+        let Some(usage_usec) = fs::read_to_string(dir.join("cpu.stat"))
+            .ok()
+            .and_then(|s| parse_usage_usec(&s))
+        else {
+            continue;
+        };
+        // io.stat is absent when the io controller isn't enabled for this subtree: no disk numbers.
+        let (read_bytes, write_bytes) =
+            fs::read_to_string(dir.join("io.stat")).map_or((0, 0), |s| parse_io_stat(&s));
+        sample.insert(
+            rel,
+            Counters {
+                usage_usec,
+                read_bytes,
+                write_bytes,
+            },
+        );
     }
     Ok(sample)
-}
-
-fn walk(root: &Path, dir: &Path, sample: &mut Sample) {
-    // A group can vanish at any point during the walk; whatever is gone is simply skipped.
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_type().is_ok_and(|t| t.is_dir()) {
-            walk(root, &entry.path(), sample);
-        }
-    }
-    let has_procs =
-        fs::read_to_string(dir.join("cgroup.procs")).is_ok_and(|p| !p.trim().is_empty());
-    if !has_procs {
-        return;
-    }
-    let Some(usage_usec) = fs::read_to_string(dir.join("cpu.stat"))
-        .ok()
-        .and_then(|s| parse_usage_usec(&s))
-    else {
-        return;
-    };
-    // io.stat is absent when the io controller isn't enabled for this subtree: no disk numbers.
-    let (read_bytes, write_bytes) =
-        fs::read_to_string(dir.join("io.stat")).map_or((0, 0), |s| parse_io_stat(&s));
-    let key = dir
-        .strip_prefix(root)
-        .expect("walk stays under root")
-        .to_path_buf();
-    sample.insert(
-        key,
-        Counters {
-            usage_usec,
-            read_bytes,
-            write_bytes,
-        },
-    );
 }
 
 fn parse_usage_usec(cpu_stat: &str) -> Option<u64> {

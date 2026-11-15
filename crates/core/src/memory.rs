@@ -9,10 +9,12 @@
 //!
 //! Swap is not RAM, so [`AppMemory::swap`] sits outside that sum. All sizes are bytes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::cgroup::groups_with_processes;
 
 /// The live cgroup v2 hierarchy.
 pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
@@ -49,8 +51,9 @@ pub struct AppMemory {
     pub file_cache: u64,
     /// Swapped out: `memory.swap.current`.
     pub swap: u64,
-    /// The app's cgroups, relative to the cgroup root (for CPU, disk and drill-down).
-    pub cgroups: Vec<String>,
+    /// The app's groups with processes, relative to the cgroup root: the keys of
+    /// [`crate::cpu_io::Sample`], for CPU, disk and drill-down.
+    pub cgroups: Vec<PathBuf>,
 }
 
 /// Reads the accounting from a cgroup v2 root and a procfs root ([`CGROUP_ROOT`] and
@@ -72,16 +75,35 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
         kb("Zswap").unwrap_or(0),
     );
 
-    let mut leaves = Vec::new();
-    walk(cgroup_root, cgroup_root, &mut leaves)?;
+    // Memory is charged to the nearest group with the memory controller, which may be an
+    // ancestor of the groups that hold the processes (`systemd-udevd.service/udev`).
+    let mut charged_to: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for group in groups_with_processes(cgroup_root)? {
+        let mut memory_group = group.as_path();
+        while !cgroup_root.join(memory_group).join("memory.stat").exists() {
+            match memory_group.parent() {
+                Some(parent) if parent != Path::new("") => memory_group = parent,
+                _ => break,
+            }
+        }
+        let memory_group = memory_group.to_path_buf();
+        charged_to.entry(memory_group).or_default().push(group);
+    }
 
     let mut apps: Vec<AppMemory> = Vec::new();
     let mut app_zswap = 0;
-    for leaf in leaves {
-        let unit = leaf.path.rsplit('/').next().unwrap_or_default();
-        let mut name = clean_name(unit);
+    for (memory_group, groups) in charged_to {
+        // A group gone since the walk is simply not counted.
+        let Some(leaf) = read_leaf(&cgroup_root.join(&memory_group)) else {
+            continue;
+        };
+        let unit = memory_group
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let mut name = clean_name(&unit);
         if name.starts_with("appimagekit_") {
-            name = main_process(&cgroup_root.join(&leaf.path), proc_root).unwrap_or(name);
+            name = main_process(&cgroup_root.join(&groups[0]), proc_root).unwrap_or(name);
         }
         app_zswap += leaf.zswap;
         match apps.iter_mut().find(|a| a.name == name) {
@@ -89,14 +111,14 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
                 app.ram += leaf.ram;
                 app.file_cache += leaf.file_cache;
                 app.swap += leaf.swap;
-                app.cgroups.push(leaf.path);
+                app.cgroups.extend(groups);
             }
             None => apps.push(AppMemory {
                 name,
                 ram: leaf.ram,
                 file_cache: leaf.file_cache,
                 swap: leaf.swap,
-                cgroups: vec![leaf.path],
+                cgroups: groups,
             }),
         }
     }
@@ -128,45 +150,13 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
 }
 
 struct Leaf {
-    path: String,
     ram: u64,
     file_cache: u64,
     swap: u64,
     zswap: u64,
 }
 
-/// Collects the populated memory leaves below `dir`: groups with `memory.stat` whose children
-/// have none. A group with memory-enabled children can't hold processes itself (cgroup v2's
-/// no-internal-process rule), and children without the controller are charged to it, so these
-/// leaves cover every process outside the root exactly once.
-fn walk(root: &Path, dir: &Path, leaves: &mut Vec<Leaf>) -> io::Result<()> {
-    let mut children = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() && path.join("memory.stat").exists() {
-            children.push(path);
-        }
-    }
-    if children.is_empty() && dir != root {
-        // Groups vanish between listing and reading; a group gone is simply not counted.
-        if let Some(leaf) = read_leaf(root, dir) {
-            leaves.push(leaf);
-        }
-    }
-    for child in children {
-        match walk(root, &child, leaves) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            r => r?,
-        }
-    }
-    Ok(())
-}
-
-fn read_leaf(root: &Path, dir: &Path) -> Option<Leaf> {
-    let events = fs::read_to_string(dir.join("cgroup.events")).ok()?;
-    if !events.lines().any(|l| l == "populated 1") {
-        return None;
-    }
+fn read_leaf(dir: &Path) -> Option<Leaf> {
     let stat = fs::read_to_string(dir.join("memory.stat")).ok()?;
     let get = |key: &str| {
         stat.lines()
@@ -187,7 +177,6 @@ fn read_leaf(root: &Path, dir: &Path) -> Option<Leaf> {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
     Some(Leaf {
-        path: dir.strip_prefix(root).ok()?.to_string_lossy().into_owned(),
         ram: anon + shmem + kernel + zswap,
         file_cache: file.saturating_sub(shmem),
         swap,
