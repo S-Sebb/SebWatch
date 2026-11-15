@@ -16,7 +16,17 @@ runs in its own systemd scope or service), so its breakdown adds up to the RAM y
        Claude agents 3.8  emulator 2.9  Zen 1.0  …
 ```
 
-Status: planning. The backlog is in the [issues](https://github.com/S-Sebb/SebWatch/issues);
+Status: early development.
+
+## Build
+
+Needs CMake 3.24+, Ninja and Qt 6.4+ (`qt6-qtbase-devel` on Fedora, `qt6-base-dev` on Ubuntu).
+`scripts/check` configures, builds and runs the tests into `build/`; run the app with
+`build/src/app/sebwatch`.
+
+`src/core` is the UI-free library (accounting, readers) the tests link; `src/app` is the
+Widgets window.
+ The backlog is in the [issues](https://github.com/S-Sebb/SebWatch/issues);
 the direction is in [docs/design.md](docs/design.md), the accounting method in
 [docs/accounting.md](docs/accounting.md).
 

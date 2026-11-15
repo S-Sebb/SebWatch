@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Configure, build and test. One line per step; full logs in build/logs/.
+set -u
+cd "$(dirname "$0")/.."
+
+build=build
+logs=$build/logs
+mkdir -p "$logs"
+
+for tool in cmake ninja; do
+    command -v "$tool" >/dev/null || { echo "MISSING: $tool not found"; exit 1; }
+done
+
+status=0
+step() { # name timeout command...
+    local name=$1 limit=$2; shift 2
+    if timeout "$limit" "$@" >"$logs/$name.log" 2>&1; then
+        echo "PASS $name"
+    else
+        echo "FAIL $name (see $logs/$name.log)"
+        status=1
+    fi
+}
+
+step configure 120 cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug
+[ $status -eq 0 ] && step build 600 cmake --build "$build"
+[ $status -eq 0 ] && QT_QPA_PLATFORM=offscreen step test 300 ctest --test-dir "$build" --output-on-failure
+[ $status -eq 0 ] || echo "SKIP remaining steps: an earlier step failed"
+exit $status

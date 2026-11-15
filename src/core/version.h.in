@@ -1,0 +1,11 @@
+#pragma once
+
+#include <QString>
+
+namespace sebwatch {
+
+inline constexpr auto kVersionString = "@PROJECT_VERSION@";
+
+QString version();
+
+} // namespace sebwatch
