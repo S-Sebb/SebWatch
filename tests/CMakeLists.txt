@@ -5,3 +5,4 @@ function(sebwatch_add_test name)
 endfunction()
 
 sebwatch_add_test(tst_version)
+target_compile_definitions(tst_version PRIVATE SEBWATCH_EXPECTED_VERSION="${PROJECT_VERSION}")

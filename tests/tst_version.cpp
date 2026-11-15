@@ -8,7 +8,7 @@ class TestVersion : public QObject
     Q_OBJECT
 
 private slots:
-    void matchesProjectVersion() { QCOMPARE(sebwatch::version(), QStringLiteral("0.1.0")); }
+    void matchesProjectVersion() { QCOMPARE(sebwatch::version(), QStringLiteral(SEBWATCH_EXPECTED_VERSION)); }
 };
 
 QTEST_GUILESS_MAIN(TestVersion)
