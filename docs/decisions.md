@@ -11,3 +11,7 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
 - **Live only, no history.** Seb, 2026-11-15.
 - **Core question the app answers:** "here is where your 12 GB of 16 GB RAM went", with app
   sums that add up and background things such as Android emulators visible. Seb, 2026-11-15.
+- **Patch notes with every release:** three sections, New, Improved, Fixes; for users only,
+  no system changes; most important items first, each a short bold sentence then a few
+  concise explanatory sentences in regular text; other items just concise sentences. Format
+  and steps in `docs/release.md`. Seb, 2026-11-15.
