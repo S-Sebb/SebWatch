@@ -4,3 +4,4 @@ pub mod cgroup;
 pub mod cpu_io;
 pub mod memory;
 pub mod naming;
+pub mod nvidia;

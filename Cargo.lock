@@ -3686,6 +3686,9 @@ dependencies = [
 [[package]]
 name = "sebwatch-core"
 version = "0.1.0"
+dependencies = [
+ "libloading",
+]
 
 [[package]]
 name = "semver"
