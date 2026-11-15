@@ -27,18 +27,19 @@ the direction is in [docs/design.md](docs/design.md), the accounting method in
 - **Every app, window or not.** Background services, emulators, agents and their child
   processes count toward the app that started them.
 - **Live.** It shows the present, refreshed every couple of seconds. No history is recorded.
-- **Light.** A native Qt app: small memory footprint, near-zero CPU, no work while hidden.
+- **Light.** A native Rust app: small memory footprint, near-zero CPU, no work while hidden.
 - **Looks native.** On KDE Plasma it should be indistinguishable from the long-established
-  apps beside it (System Settings, Dolphin, Kate): Breeze style, system colors, fonts and icons.
+  apps beside it (System Settings, Dolphin, Kate): Breeze Light and Breeze Dark themes that follow
+  the system's light/dark, plus one close to SebChat's.
 
 ## Build
 
-Needs CMake 3.24+, Ninja and Qt 6.4+ (`qt6-qtbase-devel` on Fedora, `qt6-base-dev` on Ubuntu).
-`scripts/check` configures, builds and runs the tests into `build/`; run the app with
-`build/src/app/sebwatch`.
+Needs a stable Rust toolchain; on Linux also the fontconfig and xkbcommon development
+packages (`fontconfig-devel libxkbcommon-devel` on Fedora). `scripts/check` runs `cargo fmt`,
+`clippy` and the tests, one line per step; `cargo run -p sebwatch` starts the app.
 
-`src/core` is the UI-free library (accounting, readers) the tests link; `src/app` is the
-Widgets window.
+`crates/core` is the UI-free library (accounting, readers) whose tests run headless;
+`crates/app` is the Slint window.
 
 ## License
 

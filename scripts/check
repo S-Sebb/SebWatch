@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Configure, build and test. One line per step; full logs in build/logs/.
+# Format, lint and test the workspace. One line per step; full logs in target/logs/.
 set -u
 cd "$(dirname "$0")/.."
 
-build=build
-logs=$build/logs
+logs=target/logs
 mkdir -p "$logs"
 
-for tool in cmake ninja; do
-    command -v "$tool" >/dev/null || { echo "MISSING: $tool not found"; exit 1; }
-done
+command -v cargo >/dev/null || { echo "MISSING: cargo not found"; exit 1; }
 
 status=0
 step() { # name timeout command...
@@ -22,8 +19,8 @@ step() { # name timeout command...
     fi
 }
 
-step configure 120 cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug
-[ $status -eq 0 ] && step build 600 cmake --build "$build"
-[ $status -eq 0 ] && QT_QPA_PLATFORM=offscreen step test 300 ctest --test-dir "$build" --output-on-failure
-[ $status -eq 0 ] || echo "SKIP remaining steps: an earlier step failed"
+# Independent steps: a format slip doesn't hide lint or test results.
+step fmt 60 cargo fmt --all --check
+step clippy 900 cargo clippy --workspace --all-targets -- -D warnings
+step test 900 cargo test --workspace
 exit $status

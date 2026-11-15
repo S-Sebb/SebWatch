@@ -9,12 +9,16 @@ Android emulators never appear.
 
 ## Technology
 
-- **C++20 + Qt 6 Widgets**, built with CMake. Widgets pick up the system's Breeze style,
-  color scheme, font and icon theme for free and cost far less memory than QML or a web view.
-- KDE Frameworks only where they add real integration (about dialog, icons, desktop file
-  handling). The app must still run on other desktops with plain Qt styling.
-- Charts are custom-painted widgets (a few bars), not Qt Charts.
-- NVIDIA data through NVML loaded at runtime with `dlopen`, never by spawning `nvidia-smi`.
+- **Rust + Slint**, as in SebChat's PC app: Slint's winit backend with the femtovg renderer
+  and accessibility, far lighter than a web view. A Cargo workspace: `crates/core`
+  (`sebwatch-core`, all reading and accounting, no UI dependencies, tested headless) and
+  `crates/app` (the `sebwatch` binary and its `ui/*.slint`).
+- **Three themes** drawn in Slint: Breeze Light and Breeze Dark, which reproduce the look of
+  the KDE apps beside it (colors, spacing, controls), and one close to SebChat's theme. The
+  default follows the system's light/dark. Slint does not pick up the desktop's style by
+  itself, so the Breeze look is ours to draw and keep close.
+- Charts are custom-painted (a few bars), not a charting library.
+- NVIDIA data through NVML loaded at runtime with `libloading`, never by spawning `nvidia-smi`.
   No NVIDIA driver means no NVIDIA section, not an error.
 - No daemon, no root. Everything comes from files a normal user can read
   (`/sys/fs/cgroup`, `/proc`, `/sys/class/drm`).
