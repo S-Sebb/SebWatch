@@ -5,7 +5,7 @@
 //! because an open NVML session keeps the GPU from suspending again.
 
 use std::collections::BTreeMap;
-use std::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_uint, c_ulonglong, c_void};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
