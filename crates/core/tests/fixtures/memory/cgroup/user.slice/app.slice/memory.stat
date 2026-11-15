@@ -1,0 +1,8 @@
+anon 7000000
+file 7000000
+kernel 7000000
+kernel_stack 7
+shmem 0
+zswap 7000000
+zswapped 99999
+file_mapped 3

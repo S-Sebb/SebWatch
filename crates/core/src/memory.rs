@@ -1,0 +1,267 @@
+//! Memory accounting: where every byte of `MemTotal` goes, per app (cgroup v2) plus system rows.
+//! The method and every source are described in `docs/accounting.md`.
+//!
+//! [`read`] returns a [`MemorySnapshot`] whose parts add up to [`MemorySnapshot::total`]:
+//!
+//! ```text
+//! total = Σ apps (ram + file_cache) + free + zswap_pool + kernel_and_drivers
+//! ```
+//!
+//! Swap is not RAM, so [`AppMemory::swap`] sits outside that sum. All sizes are bytes.
+
+use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::path::Path;
+
+/// The live cgroup v2 hierarchy.
+pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
+/// The live procfs.
+pub const PROC_ROOT: &str = "/proc";
+
+/// One refresh of the memory accounting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemorySnapshot {
+    /// `MemTotal`: physical RAM the kernel manages.
+    pub total: u64,
+    /// Apps, biggest RAM in use first.
+    pub apps: Vec<AppMemory>,
+    /// `MemFree`.
+    pub free: u64,
+    /// The part of the zswap pool no app accounts for (each app's share is in its `ram`).
+    pub zswap_pool: u64,
+    /// RAM no cgroup is charged for: the remainder that makes the parts sum to `total`.
+    pub kernel_and_drivers: u64,
+    /// `MemAvailable`, for the summary sentence.
+    pub available: u64,
+    /// Share of the last 10 s some task waited for memory, 0–100 (`some avg10`).
+    pub pressure_avg10: f64,
+}
+
+/// One app: every populated memory leaf cgroup that shares a cleaned name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppMemory {
+    /// Cleaned name, see [`clean_name`]; AppImage groups use their main process name.
+    pub name: String,
+    /// RAM in use: `anon + shmem + kernel + zswap`.
+    pub ram: u64,
+    /// File cache: `file - shmem`, freed on demand.
+    pub file_cache: u64,
+    /// Swapped out: `memory.swap.current`.
+    pub swap: u64,
+    /// The app's cgroups, relative to the cgroup root (for CPU, disk and drill-down).
+    pub cgroups: Vec<String>,
+}
+
+/// Reads the accounting from a cgroup v2 root and a procfs root ([`CGROUP_ROOT`] and
+/// [`PROC_ROOT`] on a live system; a fixture tree in tests).
+pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> {
+    let meminfo = fs::read_to_string(proc_root.join("meminfo"))?;
+    let kb = |key: &str| {
+        meminfo
+            .lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+            .map(|v| v * 1024)
+            .ok_or_else(|| io::Error::other(format!("meminfo has no {key}")))
+    };
+    let (total, free, available, zswap) = (
+        kb("MemTotal")?,
+        kb("MemFree")?,
+        kb("MemAvailable")?,
+        kb("Zswap").unwrap_or(0),
+    );
+
+    let mut leaves = Vec::new();
+    walk(cgroup_root, cgroup_root, &mut leaves)?;
+
+    let mut apps: Vec<AppMemory> = Vec::new();
+    let mut app_zswap = 0;
+    for leaf in leaves {
+        let unit = leaf.path.rsplit('/').next().unwrap_or_default();
+        let mut name = clean_name(unit);
+        if name.starts_with("appimagekit_") {
+            name = main_process(&cgroup_root.join(&leaf.path), proc_root).unwrap_or(name);
+        }
+        app_zswap += leaf.zswap;
+        match apps.iter_mut().find(|a| a.name == name) {
+            Some(app) => {
+                app.ram += leaf.ram;
+                app.file_cache += leaf.file_cache;
+                app.swap += leaf.swap;
+                app.cgroups.push(leaf.path);
+            }
+            None => apps.push(AppMemory {
+                name,
+                ram: leaf.ram,
+                file_cache: leaf.file_cache,
+                swap: leaf.swap,
+                cgroups: vec![leaf.path],
+            }),
+        }
+    }
+    apps.sort_by(|a, b| b.ram.cmp(&a.ram).then_with(|| a.name.cmp(&b.name)));
+
+    let charged: u64 = apps.iter().map(|a| a.ram + a.file_cache).sum();
+    // Saturating: the remainders can't be negative in the kernel's books, but the pool size
+    // and the per-cgroup charges are counted separately and can disagree by a few pages.
+    let zswap_pool = zswap.saturating_sub(app_zswap);
+    let kernel_and_drivers = total.saturating_sub(free + charged + zswap_pool);
+
+    let pressure = fs::read_to_string(proc_root.join("pressure/memory")).unwrap_or_default();
+    let pressure_avg10 = pressure
+        .lines()
+        .find(|l| l.starts_with("some "))
+        .and_then(|l| l.split(' ').find_map(|f| f.strip_prefix("avg10=")))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+    Ok(MemorySnapshot {
+        total,
+        apps,
+        free,
+        zswap_pool,
+        kernel_and_drivers,
+        available,
+        pressure_avg10,
+    })
+}
+
+struct Leaf {
+    path: String,
+    ram: u64,
+    file_cache: u64,
+    swap: u64,
+    zswap: u64,
+}
+
+/// Collects the populated memory leaves below `dir`: groups with `memory.stat` whose children
+/// have none. A group with memory-enabled children can't hold processes itself (cgroup v2's
+/// no-internal-process rule), and children without the controller are charged to it, so these
+/// leaves cover every process outside the root exactly once.
+fn walk(root: &Path, dir: &Path, leaves: &mut Vec<Leaf>) -> io::Result<()> {
+    let mut children = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() && path.join("memory.stat").exists() {
+            children.push(path);
+        }
+    }
+    if children.is_empty() && dir != root {
+        // Groups vanish between listing and reading; a group gone is simply not counted.
+        if let Some(leaf) = read_leaf(root, dir) {
+            leaves.push(leaf);
+        }
+    }
+    for child in children {
+        match walk(root, &child, leaves) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            r => r?,
+        }
+    }
+    Ok(())
+}
+
+fn read_leaf(root: &Path, dir: &Path) -> Option<Leaf> {
+    let events = fs::read_to_string(dir.join("cgroup.events")).ok()?;
+    if !events.lines().any(|l| l == "populated 1") {
+        return None;
+    }
+    let stat = fs::read_to_string(dir.join("memory.stat")).ok()?;
+    let get = |key: &str| {
+        stat.lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix(' '))
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    let (anon, file, kernel, shmem, zswap) = (
+        get("anon"),
+        get("file"),
+        get("kernel"),
+        get("shmem"),
+        get("zswap"),
+    );
+    // Absent when the kernel has no swap accounting: nothing of the group is in swap then.
+    let swap = fs::read_to_string(dir.join("memory.swap.current"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    Some(Leaf {
+        path: dir.strip_prefix(root).ok()?.to_string_lossy().into_owned(),
+        ram: anon + shmem + kernel + zswap,
+        file_cache: file.saturating_sub(shmem),
+        swap,
+        zswap,
+    })
+}
+
+/// The most common process name (`comm`) in a group, for generated unit names.
+fn main_process(group: &Path, proc_root: &Path) -> Option<String> {
+    let procs = fs::read_to_string(group.join("cgroup.procs")).ok()?;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for pid in procs.lines() {
+        if let Ok(comm) = fs::read_to_string(proc_root.join(pid).join("comm")) {
+            *counts.entry(comm.trim().to_string()).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        .map(|(name, _)| name)
+}
+
+/// Turns a systemd unit name into an app name: drops the unit type suffix, the template
+/// instance (`@autostart`, `@<id>`), the `app-`, `flatpak-` and `dbus-:<bus>-` prefixes and a
+/// random or numeric tail, then unescapes `\xNN`.
+///
+/// `app-flatpak-org.mozilla.firefox-1234.scope` → `org.mozilla.firefox`,
+/// `app-steam@autostart.service` → `steam`, `t3code-claude-b99dfcab.scope` → `t3code-claude`.
+pub fn clean_name(unit: &str) -> String {
+    let mut name = [".scope", ".service", ".slice"]
+        .iter()
+        .find_map(|s| unit.strip_suffix(s))
+        .unwrap_or(unit);
+    if let Some((base, _)) = name.split_once('@') {
+        name = base;
+    }
+    name = name.strip_prefix("app-").unwrap_or(name);
+    name = name.strip_prefix("flatpak-").unwrap_or(name);
+    if let Some(rest) = name.strip_prefix("dbus-:") {
+        name = rest.split_once('-').map_or(rest, |(_, n)| n);
+    }
+    name = match name.rsplit_once('-') {
+        Some((base, tail)) if is_random(tail) => base,
+        _ => name,
+    };
+    unescape(name)
+}
+
+/// A tail systemd or a launcher made up: a number, or a hex id of 8 or more digits.
+fn is_random(tail: &str) -> bool {
+    !tail.is_empty()
+        && (tail.bytes().all(|b| b.is_ascii_digit())
+            || (tail.len() >= 8 && tail.bytes().all(|b| b.is_ascii_hexdigit())))
+}
+
+fn unescape(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(i) = rest.find("\\x") {
+        out.push_str(&rest[..i]);
+        let code = rest
+            .get(i + 2..i + 4)
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match code {
+            Some(c) => {
+                out.push(c as char);
+                rest = &rest[i + 4..];
+            }
+            None => {
+                out.push_str("\\x");
+                rest = &rest[i + 2..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
