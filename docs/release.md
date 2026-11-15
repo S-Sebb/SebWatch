@@ -4,8 +4,8 @@ Every release ships with patch notes.
 
 ## Steps
 
-1. Bump the top-level CMake project version (`project(SebWatch VERSION X.Y.Z ...)`),
-   by PR to `main`.
+1. Bump `version` under `[workspace.package]` in the root `Cargo.toml` and commit the
+   updated `Cargo.lock`, by PR to `main`.
 2. Write the patch notes in the format below.
 3. Tag the merged commit on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. Create the GitHub release with the patch notes as its body:
