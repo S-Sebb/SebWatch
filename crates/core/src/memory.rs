@@ -15,6 +15,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::cgroup::groups_with_processes;
+use crate::naming::clean_name;
 
 /// The live cgroup v2 hierarchy.
 pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
@@ -43,7 +44,7 @@ pub struct MemorySnapshot {
 /// One app: every populated memory leaf cgroup that shares a cleaned name.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppMemory {
-    /// Cleaned name, see [`clean_name`]; AppImage groups use their main process name.
+    /// Cleaned name, see [`clean_name`] (the key apps are grouped by); AppImage groups use their main process name.
     pub name: String,
     /// RAM in use: `anon + shmem + kernel + zswap`.
     pub ram: u64,
@@ -197,60 +198,4 @@ fn main_process(group: &Path, proc_root: &Path) -> Option<String> {
         .into_iter()
         .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
         .map(|(name, _)| name)
-}
-
-/// Turns a systemd unit name into an app name: drops the unit type suffix, the template
-/// instance (`@autostart`, `@<id>`), the `app-`, `flatpak-` and `dbus-:<bus>-` prefixes and a
-/// random or numeric tail, then unescapes `\xNN`.
-///
-/// `app-flatpak-org.mozilla.firefox-1234.scope` → `org.mozilla.firefox`,
-/// `app-steam@autostart.service` → `steam`, `t3code-claude-b99dfcab.scope` → `t3code-claude`.
-pub fn clean_name(unit: &str) -> String {
-    let mut name = [".scope", ".service", ".slice"]
-        .iter()
-        .find_map(|s| unit.strip_suffix(s))
-        .unwrap_or(unit);
-    if let Some((base, _)) = name.split_once('@') {
-        name = base;
-    }
-    name = name.strip_prefix("app-").unwrap_or(name);
-    name = name.strip_prefix("flatpak-").unwrap_or(name);
-    if let Some(rest) = name.strip_prefix("dbus-:") {
-        name = rest.split_once('-').map_or(rest, |(_, n)| n);
-    }
-    name = match name.rsplit_once('-') {
-        Some((base, tail)) if is_random(tail) => base,
-        _ => name,
-    };
-    unescape(name)
-}
-
-/// A tail systemd or a launcher made up: a number, or a hex id of 8 or more digits.
-fn is_random(tail: &str) -> bool {
-    !tail.is_empty()
-        && (tail.bytes().all(|b| b.is_ascii_digit())
-            || (tail.len() >= 8 && tail.bytes().all(|b| b.is_ascii_hexdigit())))
-}
-
-fn unescape(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut rest = name;
-    while let Some(i) = rest.find("\\x") {
-        out.push_str(&rest[..i]);
-        let code = rest
-            .get(i + 2..i + 4)
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        match code {
-            Some(c) => {
-                out.push(c as char);
-                rest = &rest[i + 4..];
-            }
-            None => {
-                out.push_str("\\x");
-                rest = &rest[i + 2..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }

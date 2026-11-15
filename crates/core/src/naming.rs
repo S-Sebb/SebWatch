@@ -140,8 +140,18 @@ impl Naming {
 
 /// The leaf's name without unit suffix, `app-` and launcher prefixes, random or numeric tail
 /// and systemd escapes: `app-flatpak-app.zen_browser.zen-1234.scope` → `app.zen_browser.zen`.
+/// Other leaves also drop a template instance and a D-Bus activation prefix:
+/// `dbus-:1.2-org.kde.kdeconnect@0.service` → `org.kde.kdeconnect`.
 pub fn clean_name(leaf: &str) -> String {
-    app_id(leaf).unwrap_or_else(|| unescape(strip_tail(strip_suffix(leaf))))
+    app_id(leaf).unwrap_or_else(|| {
+        let name = strip_suffix(leaf);
+        let name = name.split_once('@').map_or(name, |(base, _)| base);
+        let name = name
+            .strip_prefix("dbus-:")
+            .and_then(|n| n.split_once('-'))
+            .map_or(name, |(_, n)| n);
+        unescape(strip_tail(name))
+    })
 }
 
 /// The application id of an `app[-<launcher>]-<id>[-<random>].scope` or
@@ -244,6 +254,39 @@ mod tests {
         AppName {
             name: name.into(),
             icon: icon.into(),
+        }
+    }
+
+    #[test]
+    fn clean_name_cases() {
+        for (leaf, name) in [
+            ("app-org.kde.konsole-12345.scope", "org.kde.konsole"),
+            (
+                "app-flatpak-com.rtosta.zapzap-2091769723.scope",
+                "com.rtosta.zapzap",
+            ),
+            ("app-steam@autostart.service", "steam"),
+            (
+                "app-dolphin@6ba726cf402f46af94a837f7786b6d55.service",
+                "dolphin",
+            ),
+            ("emulator-guide35.service", "emulator-guide35"),
+            (
+                r"app-mount\x2dgdrive.sh@autostart.service",
+                "mount-gdrive.sh",
+            ),
+            ("t3code-claude-b99dfcab.scope", "t3code-claude"),
+            (
+                "dbus-:1.2-org.kde.kdeconnect@0.service",
+                "org.kde.kdeconnect",
+            ),
+            ("app-t3code.slice", "t3code"),
+            (
+                r"app-appimagekit_ac41f740be554e532a3d39ba8e8b3233\x2dT3_Code__Beta_@45bba9a0.service",
+                "appimagekit_ac41f740be554e532a3d39ba8e8b3233-T3_Code__Beta_",
+            ),
+        ] {
+            assert_eq!(clean_name(leaf), name, "{leaf}");
         }
     }
 

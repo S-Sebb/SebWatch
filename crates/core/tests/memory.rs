@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use sebwatch_core::memory::{clean_name, read};
+use sebwatch_core::memory::read;
 
 #[test]
 fn fixture_sums_exactly_to_mem_total() {
@@ -44,37 +44,4 @@ fn fixture_sums_exactly_to_mem_total() {
         m.total
     );
     assert_eq!(m.pressure_avg10, 1.92);
-}
-
-#[test]
-fn clean_name_cases() {
-    for (unit, name) in [
-        ("app-org.kde.konsole-12345.scope", "org.kde.konsole"),
-        (
-            "app-flatpak-com.rtosta.zapzap-2091769723.scope",
-            "com.rtosta.zapzap",
-        ),
-        ("app-steam@autostart.service", "steam"),
-        (
-            "app-dolphin@6ba726cf402f46af94a837f7786b6d55.service",
-            "dolphin",
-        ),
-        ("emulator-guide35.service", "emulator-guide35"),
-        (
-            "app-mount\\x2dgdrive.sh@autostart.service",
-            "mount-gdrive.sh",
-        ),
-        ("t3code-claude-b99dfcab.scope", "t3code-claude"),
-        (
-            "dbus-:1.2-org.kde.kdeconnect@0.service",
-            "org.kde.kdeconnect",
-        ),
-        ("app-t3code.slice", "t3code"),
-        (
-            "app-appimagekit_ac41f740be554e532a3d39ba8e8b3233\\x2dT3_Code__Beta_@45bba9a0.service",
-            "appimagekit_ac41f740be554e532a3d39ba8e8b3233-T3_Code__Beta_",
-        ),
-    ] {
-        assert_eq!(clean_name(unit), name, "{unit}");
-    }
 }

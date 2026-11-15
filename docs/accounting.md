@@ -17,7 +17,7 @@ parent's group, so a build an agent starts is charged to that agent.
   controller, such as `systemd-udevd.service/udev`, is charged to its parent), each such group
   once.
 - **Grouping**: several groups can belong to one app (each Claude agent gets its own scope,
-  T3 Code has an AppImage service and a scope). Group them by a cleaned name: strip the
+  T3 Code has an AppImage service and a scope). Group them by `naming::clean_name`: strip the
   `.scope/.service/.slice` suffix, the template instance (`@autostart`, `@<id>`), the `app-`,
   `flatpak-` and `dbus-:<bus>-` prefixes and the random tail (a number or a hex id of 8+
   digits), and unescape `\x2d`. Generated names that say nothing (`appimagekit_<hash>`)
