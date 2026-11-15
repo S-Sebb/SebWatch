@@ -17,8 +17,12 @@ parent's group, so a build an agent starts is charged to that agent.
   `.scope/.service/.slice` suffix, the `app-` and `flatpak-` prefixes and the random or
   numeric tail, and unescape `\x2d`. Generated names that say nothing (`appimagekit_<hash>`)
   fall back to the most common process name in the group.
-- **Display name and icon**: from the matching `.desktop` file when there is one (desktop id
-  or Flatpak id), else the unit's `Description=` via systemd, else the cleaned name.
+- **Display name and icon** (`crates/core/src/naming.rs`): a group whose main process is
+  `qemu-system*` is "Android emulator · <instance>" (its Description is a long shell command);
+  else the matching `.desktop` file's `Name`/`Icon` (desktop id or Flatpak id, searched in the
+  XDG data dirs and Flatpak exports), else the unit file's `Description=` (read from disk, also
+  from the `foo@.service` template), else the cleaned name. Without a desktop file the icon is
+  the generic `application-x-executable`. Results are cached per leaf name.
 
 ## Memory per app (`memory.stat`, bytes)
 
