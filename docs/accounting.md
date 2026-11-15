@@ -43,8 +43,20 @@ are split rather than counted twice.
 
 ## CPU and disk
 
-Two reads of `cpu.stat` (`usage_usec`) and `io.stat` (`rbytes`, `wbytes`) per leaf, one
-refresh interval apart. CPU is shown in cores (1.00 = one core busy).
+Two reads per leaf, one refresh interval apart (`crates/core/src/cpu_io.rs`); each rate is the
+counter's increase divided by the interval. Results are keyed by the group's path relative to
+the cgroup root, the same key the memory numbers use.
+
+| Column | Source |
+|---|---|
+| CPU | `cpu.stat` `usage_usec`, shown in cores (1.00 = one core busy) |
+| Disk read | `io.stat` `rbytes`, summed over devices, bytes/s |
+| Disk write | `io.stat` `wbytes`, summed over devices, bytes/s |
+
+- A group with no `io.stat` (io controller not enabled for its subtree) shows no disk use.
+- A group new since the last read shows zero for one refresh: its counters cover its whole
+  life, not the interval. A group that vanished is dropped. A counter that went down (a new
+  group reusing the path) counts as zero.
 
 ## GPU
 
