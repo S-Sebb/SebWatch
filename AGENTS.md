@@ -1,6 +1,6 @@
 # SebWatch agent notes
 
-C++20 + Qt 6 Widgets desktop app, CMake. Read before working:
+Rust + Slint desktop app, Cargo workspace (`crates/core`, `crates/app`). Read before working:
 
 - `docs/design.md`: product direction, window layout, technology choices.
 - `docs/accounting.md`: where every number comes from. Change it with the code.

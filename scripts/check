@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Format, lint and test the workspace. One line per step; full logs in target/logs/.
+set -u
+cd "$(dirname "$0")/.."
+
+logs=target/logs
+mkdir -p "$logs"
+
+command -v cargo >/dev/null || { echo "MISSING: cargo not found"; exit 1; }
+
+status=0
+step() { # name timeout command...
+    local name=$1 limit=$2; shift 2
+    if timeout "$limit" "$@" >"$logs/$name.log" 2>&1; then
+        echo "PASS $name"
+    else
+        echo "FAIL $name (see $logs/$name.log)"
+        status=1
+    fi
+}
+
+# Independent steps: a format slip doesn't hide lint or test results.
+step fmt 60 cargo fmt --all --check
+step clippy 900 cargo clippy --workspace --all-targets -- -D warnings
+step test 900 cargo test --workspace
+exit $status

@@ -1,0 +1,9 @@
+[package]
+name = "sebwatch-core"
+description = "UI-free accounting: where RAM, CPU, GPU and disk go, per app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

@@ -16,7 +16,7 @@ runs in its own systemd scope or service), so its breakdown adds up to the RAM y
        Claude agents 3.8  emulator 2.9  Zen 1.0  …
 ```
 
-Status: planning. The backlog is in the [issues](https://github.com/S-Sebb/SebWatch/issues);
+Status: early development. The backlog is in the [issues](https://github.com/S-Sebb/SebWatch/issues);
 the direction is in [docs/design.md](docs/design.md), the accounting method in
 [docs/accounting.md](docs/accounting.md).
 
@@ -27,9 +27,19 @@ the direction is in [docs/design.md](docs/design.md), the accounting method in
 - **Every app, window or not.** Background services, emulators, agents and their child
   processes count toward the app that started them.
 - **Live.** It shows the present, refreshed every couple of seconds. No history is recorded.
-- **Light.** A native Qt app: small memory footprint, near-zero CPU, no work while hidden.
+- **Light.** A native Rust app: small memory footprint, near-zero CPU, no work while hidden.
 - **Looks native.** On KDE Plasma it should be indistinguishable from the long-established
-  apps beside it (System Settings, Dolphin, Kate): Breeze style, system colors, fonts and icons.
+  apps beside it (System Settings, Dolphin, Kate): Breeze Light and Breeze Dark themes that follow
+  the system's light/dark, plus one close to SebChat's.
+
+## Build
+
+Needs a stable Rust toolchain; on Linux also the fontconfig and xkbcommon development
+packages (`fontconfig-devel libxkbcommon-devel` on Fedora). `scripts/check` runs `cargo fmt`,
+`clippy` and the tests, one line per step; `cargo run -p sebwatch` starts the app.
+
+`crates/core` is the UI-free library (accounting, readers) whose tests run headless;
+`crates/app` is the Slint window.
 
 ## License
 
