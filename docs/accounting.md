@@ -71,8 +71,19 @@ the cgroup root, the same key the memory numbers use.
 
 ## GPU
 
-- **NVIDIA**: NVML `nvmlDeviceGetComputeRunningProcesses` / `GraphicsRunningProcesses` for
-  VRAM per PID, `nvmlDeviceGetProcessUtilization` for SM %, device memory, utilization and
-  power for the totals. PIDs map to apps through their cgroup.
+- **NVIDIA** (`crates/core/src/nvidia.rs`): first the dGPU's runtime PM status
+  (`/sys/bus/pci/devices/<addr>/power/runtime_status`); `suspended` shows "asleep" and NVML is
+  not loaded, so the GPU stays asleep. Otherwise `libnvidia-ml.so.1` is loaded at runtime and
+  NVML is initialised, read and shut down every refresh (an open session would keep the GPU
+  awake). No NVIDIA GPU, no library or a failed init: no NVIDIA section.
+
+  | Column | Source |
+  |---|---|
+  | VRAM per app | `nvmlDeviceGetComputeRunningProcesses_v3` and `GraphicsRunningProcesses_v3`; a PID in both counts once |
+  | GPU % per app | `nvmlDeviceGetProcessUtilization` SM %, averaged per PID over the refresh interval |
+  | Device totals | `nvmlDeviceGetMemoryInfo` used/total, `GetUtilizationRates` gpu %, `GetPowerUsage` mW |
+
+  PIDs map to apps through `/proc/<pid>/cgroup` (`0::/<path>`), the same key as CPU and disk;
+  each app's numbers are the sum over its processes.
 - **Intel / AMD**: DRM fdinfo (`/proc/<pid>/fdinfo/*` with `drm-driver`): `drm-engine-*`
   busy time and `drm-memory-*` / `drm-resident-*` per client, deduplicated by `drm-client-id`.
