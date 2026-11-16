@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SebWatch
+GenericName=System Monitor
+Comment=See what each app uses: CPU, memory, GPU and disk
+Exec=sebwatch
+Icon=sebwatch
+Terminal=false
+Categories=System;Monitor;
+StartupWMClass=sebwatch
