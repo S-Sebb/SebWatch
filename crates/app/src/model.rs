@@ -1181,6 +1181,14 @@ fn tile(name: &str, value: String, unit: String, graph: Option<(&History, Measur
         graphed: graph.is_some(),
         line: line.into(),
         area: area.into(),
+        about: match name {
+            "CPU" => "Cores busy over the last 2 s; the line shows the last minute.",
+            "GPU" => "How busy each GPU was over the last 2 s.",
+            "VRAM" => "Dedicated GPU memory in use by apps and the driver.",
+            "Disk" => "Data read and written per second on all disks.",
+            other => unreachable!("no tile named {other}"),
+        }
+        .into(),
         ..Tile::default()
     }
 }
@@ -1222,10 +1230,18 @@ fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
                 (percent(nvidia), "NVIDIA")
             };
             let graph = (!s.gpu_asleep).then_some((history, Measure::Gpu));
-            tiles.push(match &s.igpu {
+            let mut gpu = match &s.igpu {
                 Some(igpu) => igpu_tile(igpu, history, tile("GPU", value, unit.into(), graph)),
                 None => tile("GPU", value, unit.into(), graph),
-            });
+            };
+            if s.gpu_asleep {
+                gpu.about = format!(
+                    "{}\nAsleep: powered down, and SebWatch doesn't wake it.",
+                    gpu.about
+                )
+                .into();
+            }
+            tiles.push(gpu);
         } else if let Some(igpu) = &s.igpu {
             tiles.push(igpu_tile(igpu, history, Tile::default()));
         }
@@ -1404,6 +1420,11 @@ mod tests {
                 asleep.tiles[2].unit.as_str()
             ),
             ("", "GPU asleep")
+        );
+        // The GPU tile's explanation adds what asleep means (#41).
+        assert_eq!(
+            asleep.tiles[1].about,
+            "How busy each GPU was over the last 2 s.\nAsleep: powered down, and SebWatch doesn't wake it."
         );
         // Its graphs go (the Intel GPU's stays); CPU and Disk keep theirs.
         let graphed: Vec<_> = asleep.tiles.iter().map(|t| t.graphed).collect();

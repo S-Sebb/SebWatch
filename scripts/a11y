@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # What a screen reader sees: runs the app on a headless KWin (`--virtual`) with its own D-Bus
 # session and accessibility bus, so nothing shows on the desktop, and reads its AT-SPI tree.
-# Clicks the second row through AT-SPI and checks the focus lands on it and stays there across
-# a refresh. One line per check; the tree in target/logs/a11y-tree.txt, other logs beside it.
+# Checks the tiles and column headers say what they measure, clicks the second row through AT-SPI
+# and checks the focus lands on it and stays there across a refresh. One line per check; the tree in target/logs/a11y-tree.txt, other logs beside it.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -125,8 +125,21 @@ check("menu button", len(button) == 1, "no button named Menu")
 segments = [n for n in nodes if n["role"] == "list item" and "% of" in n["description"]]
 check("bar segments have names, values and tooltips", len(segments) > 5 and all(s["name"] for s in segments),
       f"{len(segments)} segments")
-tiles = [n for n in nodes if n["name"] in ("CPU", "Disk") and n["description"]]
-check("tiles have names and values", len(tiles) == 2, f"{len(tiles)} tiles")
+def items_of(name):
+    lists = [n["node"] for n in nodes if n["role"] == "list box" and n["name"] == name]
+    return [dict(name=c.name, description=c.description) for c in lists[0]] if lists else []
+tiles = items_of("Totals")
+check("tiles have names, values and what they measure",
+      [t["name"] for t in tiles][:1] == ["CPU"] and len(tiles) >= 2
+      and tiles[0]["description"].endswith(". Cores busy over the last 2 s; the line shows the last minute.")
+      and tiles[-1]["description"].endswith(". Data read and written per second on all disks."),
+      tiles)
+headers = items_of("Columns")
+check("headers say what they measure",
+      [h["name"] for h in headers][:2] == ["Name", "RAM in use"] and headers[-1]["name"] == "VRAM"
+      and headers[1]["description"] == "RAM the app holds, counting its kernel memory and zswap."
+      and headers[-1]["description"] == "Dedicated GPU memory the app holds.",
+      headers)
 
 # A click through AT-SPI focuses the row; the screen reader's focus is on it, not on the list.
 second = rows[1]

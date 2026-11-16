@@ -215,6 +215,16 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("leftover-row-{name}.png")),
         );
+        // #41: a header hovered ("RAM in use", "Swapped out" in SebChat's wider table), two rows
+        // and a header's half above the app's row.
+        let header = (swatch as u32 / shot.width) as f32 - 5.0 - 1.5 * row - 14.0;
+        shot.pointer(4.0, 4.0, false);
+        shot.pointer(440.0, header, false);
+        shot.wait(Duration::from_millis(800));
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("about-header-{name}.png")),
+        );
 
         // Closed apps hovered: the segment after Other apps, grey too, so the rightmost pixel
         // of that grey; and its row expanded in a window tall enough for the whole table.
@@ -366,8 +376,9 @@ fn screenshots() {
         ui.hide().unwrap();
     }
 
-    // The keyboard focus, reached by Tab (menu button, search field, table): the Android
-    // emulator's row, its leftover row with the tooltip, the search field, then the menu on Dark.
+    // The keyboard focus, reached by Tab (menu button, tiles, search field, header, table): the
+    // tiles and the header with their tooltips open at once, the Android emulator's row, its
+    // leftover row with the tooltip, the search field, then the menu.
     for (choice, name, height) in [
         (ThemeChoice::Light, "light", 844),
         (ThemeChoice::Dark, "dark", 844),
@@ -391,9 +402,35 @@ fn screenshots() {
         };
         window.set_size(PhysicalSize::new(shot.width, shot.height));
         ui.invoke_pick(1);
-        for _ in 0..3 {
-            shot.tap(Key::Tab);
+        shot.tap(Key::Tab);
+        shot.tap(Key::Tab);
+        shot.save(&shot.render(), &dir.join(format!("focus-tile-{name}.png")));
+        // The last tile, Disk.
+        shot.tap(Key::End);
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("focus-tile-disk-{name}.png")),
+        );
+        shot.tap(Key::Tab);
+        shot.tap(Key::Tab);
+        // Left/Right to Disk, the fifth figure; Enter sorts by it.
+        for _ in 0..5 {
+            shot.tap(Key::RightArrow);
         }
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("focus-header-{name}.png")),
+        );
+        shot.tap(Key::RightArrow);
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("focus-header-intel-{name}.png")),
+        );
+        shot.tap(Key::LeftArrow);
+        shot.tap(Key::Return);
+        assert_eq!(ui.get_sort_column(), 4);
+        ui.invoke_sort_clicked(0);
+        shot.tap(Key::Tab);
         shot.save(&shot.render(), &dir.join(format!("focus-row-{name}.png")));
         for _ in 0..5 {
             shot.tap(Key::DownArrow);
@@ -404,9 +441,11 @@ fn screenshots() {
             &dir.join(format!("focus-leftover-{name}.png")),
         );
         shot.tap(Key::Backtab);
+        shot.tap(Key::Backtab);
         if choice == ThemeChoice::Light {
             shot.save(&shot.render(), &dir.join("focus-search-light.png"));
         }
+        shot.tap(Key::Backtab);
         shot.tap(Key::Backtab);
         shot.tap(Key::Return);
         shot.tap(Key::DownArrow);

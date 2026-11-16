@@ -48,6 +48,19 @@ export struct Tile {
     value2: string,
     unit2: string,
     line2: string,
+    // What the figure measures, in the tooltip; a second line after a newline.
+    about: string,
+}
+
+// A tooltip opened by the keyboard focus, drawn over the window: where, and what it says.
+struct KeyTip {
+    shown: bool,
+    // The tip's left edge, or its right edge when `right`.
+    x: length,
+    y: length,
+    right: bool,
+    title: string,
+    about: string,
 }
 
 export enum RowKind { app, group, process, kernel, more }
@@ -116,6 +129,49 @@ component TipCard inherits Rectangle {
         spacing: 2px;
         @children
     }
+}
+
+// The keyboard focus: Breeze's 1 px accent frame inside the item, or a 2 px square one in SebChat.
+component FocusRing {
+    Rectangle {
+        x: Theme.picnic ? 0 : 1px;
+        y: self.x;
+        width: root.width - 2 * self.x;
+        height: root.height - 2 * self.y;
+        border-width: Theme.picnic ? 2px : 1px;
+        border-radius: Theme.picnic ? 0 : 3px;
+        border-color: Theme.accent;
+    }
+}
+
+// A figure's name and what it measures, in the bars' tooltip style. Screen readers get the same
+// words as the figure's description.
+component AboutTip inherits TipCard {
+    in property <string> title;
+    in property <string> about;
+    Label {
+        text: root.title;
+        font-size: Theme.small;
+        font-weight: Theme.picnic ? 800 : 700;
+        accessible-role: none;
+    }
+    Muted {
+        text: root.about;
+        font-size: Theme.small;
+        accessible-role: none;
+    }
+}
+
+// The tooltip of the item the keyboard is on, opened at once, kept inside the window.
+component FocusTip inherits AboutTip {
+    in property <KeyTip> tip;
+    in property <length> room;
+    title: self.tip.title;
+    about: self.tip.about;
+    width: self.preferred-width;
+    height: self.preferred-height;
+    x: max(8px, min(self.room - self.width - 8px, self.tip.right ? self.tip.x - self.width : self.tip.x));
+    y: self.tip.y;
 }
 
 component SegmentBar {
@@ -343,15 +399,18 @@ component TileFigure inherits VerticalLayout {
 
 component TileView inherits Card {
     in property <Tile> tile;
+    in property <int> index;
+    in property <bool> focused;
     // The NVIDIA GPU's colour beside the Intel or AMD one's accent.
     property <color> second: Theme.picnic ? #8a63d2 : Theme.muted;
     inset: Theme.picnic ? 12px : 0;
     // The graph runs to the frame's corners.
     clip-content: true;
-    // AT-SPI (AccessKit 0.24) passes on no text values, so the value is the description.
-    accessible-role: groupbox;
+    // AT-SPI (AccessKit 0.24) passes on no text values, so the values start the description.
+    accessible-role: list-item;
     accessible-label: self.tile.name;
-    accessible-description: (self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit) + (self.tile.unit2 == "" ? "" : self.tile.value2 == "" ? ", " + self.tile.unit2 : ", " + self.tile.value2 + " " + self.tile.unit2);
+    accessible-description: (self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit) + (self.tile.unit2 == "" ? "" : self.tile.value2 == "" ? ", " + self.tile.unit2 : ", " + self.tile.value2 + " " + self.tile.unit2) + ". " + self.tile.about;
+    accessible-item-index: self.index;
     // Every tile the same size, graph or not, sharing out the bars' height.
     vertical-stretch: 1;
     Rectangle {
@@ -416,19 +475,89 @@ component TileView inherits Card {
                 }
             }
         }
+        // The whole tile, out to the frame the inset leaves.
+        Rectangle {
+            x: -root.inset;
+            y: -root.inset;
+            width: parent.width + 2 * root.inset;
+            height: parent.height + 2 * root.inset;
+            if root.focused: FocusRing {
+                width: 100%;
+                height: 100%;
+            }
+            // The focused tile's tooltip is already open.
+            if !root.focused: Tooltip {
+                AboutTip {
+                    title: root.tile.name;
+                    about: root.tile.about;
+                }
+            }
+        }
     }
 }
 
-// The keyboard focus: Breeze's 1 px accent frame inside the item, or a 2 px square one in SebChat.
-component FocusRing {
-    Rectangle {
-        x: Theme.picnic ? 0 : 1px;
-        y: self.x;
-        width: root.width - 2 * self.x;
-        height: root.height - 2 * self.y;
-        border-width: Theme.picnic ? 2px : 1px;
-        border-radius: Theme.picnic ? 0 : 3px;
-        border-color: Theme.accent;
+// The tiles, one Tab stop: the arrows move between them, and the focused one says what it
+// measures. Clicks leave the focus where it is, as on the headers.
+component TileStrip inherits FocusScope {
+    in property <[Tile]> tiles;
+    // Two by two.
+    in property <bool> wide;
+    in property <length> gap;
+    // The grid's height, for the room left for it.
+    out property <length> needs: grid.min-height;
+    property <int> current;
+    // The tile the keyboard is on, should the tiles grow fewer.
+    property <int> at: min(self.current, self.tiles.length - 1);
+    property <int> columns: self.wide ? 2 : 1;
+    // Every tile is as high: they share the height evenly.
+    property <int> rows: ceil(self.tiles.length / self.columns);
+    property <length> tile-height: (self.height - (self.rows - 1) * self.gap) / self.rows;
+    // To the right of the tile, level with its top.
+    out property <KeyTip> tip: {
+        shown: self.has-focus && self.at >= 0,
+        x: self.absolute-position.x + mod(self.at, self.columns) * (180px + self.gap) + 180px + 10px,
+        y: self.absolute-position.y + floor(self.at / self.columns) * (self.tile-height + self.gap),
+        right: false,
+        title: self.at >= 0 ? self.tiles[self.at].name : "",
+        about: self.at >= 0 ? self.tiles[self.at].about : "",
+    };
+    focus-on-click: false;
+    accessible-role: list;
+    accessible-label: "Totals";
+    accessible-item-count: self.tiles.length;
+    accessible-delegate-focus: self.at;
+    key-pressed(event) => {
+        if event.modifiers.control || event.modifiers.alt {
+            return reject;
+        }
+        if event.text == Key.LeftArrow {
+            root.current = max(0, root.at - 1);
+        } else if event.text == Key.RightArrow {
+            root.current = min(root.tiles.length - 1, root.at + 1);
+        } else if event.text == Key.UpArrow {
+            root.current = root.at >= root.columns ? root.at - root.columns : root.at;
+        } else if event.text == Key.DownArrow {
+            root.current = root.at + root.columns < root.tiles.length ? root.at + root.columns : root.at;
+        } else if event.text == Key.Home {
+            root.current = 0;
+        } else if event.text == Key.End {
+            root.current = root.tiles.length - 1;
+        } else {
+            return reject;
+        }
+        accept
+    }
+    grid := GridLayout {
+        spacing: root.gap;
+        for tile[i] in root.tiles: TileView {
+            tile: tile;
+            index: i;
+            focused: root.has-focus && i == root.at;
+            // Fixed: the grid would otherwise give the columns unequal widths.
+            width: 180px;
+            row: floor(i / root.columns);
+            col: mod(i, root.columns);
+        }
     }
 }
 
@@ -618,6 +747,89 @@ export global Columns {
     out property <[string]> titles: ["RAM in use", "Swapped out", "File cache", "CPU (cores)", "Disk", self.igpu, self.igpu == "" ? "GPU" : "NVIDIA", "VRAM"];
     // The widths' sum.
     out property <length> total: self.igpu == "" ? 596px : 664px;
+    // The widths from each column to the table's right end, then none.
+    out property <[length]> tails: [self.total, self.total - 110px, self.total - 222px, self.total - 312px, self.total - 406px, self.total - 490px, 60px + self.widths[6], 60px, 0];
+    // What each column measures, on its header (Seb's wording, #41).
+    out property <string> name-about: "An app and everything it started; the arrow shows its processes.";
+    out property <[string]> abouts: [
+        "RAM the app holds, counting its kernel memory and zswap.",
+        "The app's memory moved out of RAM to swap.",
+        "Files kept in RAM for speed, freed when memory runs short.",
+        "How busy the app kept the CPU; 1.00 is one full core.",
+        "Data the app reads and writes per second.",
+        "How busy the app kept the " + self.igpu + " GPU.",
+        self.igpu == "" ? "How busy the app kept the GPU." : "How busy the app kept the NVIDIA GPU.",
+        "Dedicated GPU memory the app holds.",
+    ];
+}
+
+// A column's header: a click or Enter sorts by it (not the name column), and it says what the
+// column measures.
+component HeaderCell inherits Rectangle {
+    in property <string> title;
+    in property <string> about;
+    in property <int> index;
+    // The name column: no divider, left aligned, not sortable.
+    in property <bool> name;
+    in property <bool> sorted;
+    in property <bool> ascending;
+    in property <bool> focused;
+    callback clicked();
+    accessible-role: list-item;
+    accessible-label: self.title;
+    accessible-description: self.about;
+    accessible-item-index: self.index;
+    accessible-action-default => {
+        self.clicked();
+    }
+    Rectangle {
+        x: -1px;
+        width: 1px;
+        y: 1px;
+        height: parent.height - 2px;
+        visible: !Theme.picnic && !root.name;
+        background: Theme.line;
+    }
+    HorizontalLayout {
+        padding-left: root.name ? 8px : 0;
+        padding-right: root.name ? 0 : 8px;
+        spacing: 4px;
+        alignment: root.name ? start : end;
+        Label {
+            text: root.title;
+            font-size: Theme.picnic ? Theme.small : Theme.font-size;
+            font-weight: Theme.picnic ? 800 : 400;
+            color: Theme.picnic ? Theme.muted : Theme.fg;
+        }
+        // Down: largest first.
+        if root.sorted: VerticalLayout {
+            alignment: center;
+            Chevron {
+                width: 10px;
+                height: 10px;
+                open: true;
+                up: root.ascending;
+                color: Theme.picnic ? Theme.muted : Theme.fg;
+            }
+        }
+    }
+    TouchArea {
+        mouse-cursor: root.name ? default : pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    if root.focused: FocusRing {
+        width: 100%;
+        height: 100%;
+    }
+    // The focused header's tooltip is already open.
+    if !root.focused: Tooltip {
+        AboutTip {
+            title: root.title;
+            about: root.about;
+        }
+    }
 }
 
 component Cell inherits Label {
@@ -942,6 +1154,17 @@ component Table {
     callback searched(string);
     // Focus frames only after a key, as in KDE apps.
     property <bool> keyboard;
+    // The header the keyboard is on: 0 for the name, then the figures' columns.
+    property <int> column;
+    // Below the header, under the name's left end or a figure's right end.
+    out property <KeyTip> tip: {
+        shown: header.has-focus,
+        x: header.absolute-position.x + view.content-x + (self.column == 0 ? 0 : self.content-width - Columns.tails[self.column]),
+        y: header.absolute-position.y + header.height + 4px,
+        right: self.column != 0,
+        title: self.column == 0 ? "Name" : Columns.titles[self.column - 1],
+        about: self.column == 0 ? Columns.name-about : Columns.abouts[self.column - 1],
+    };
     property <length> row-height: Theme.picnic ? 31px : 28px;
 
     // Scrolls the focused row into view.
@@ -961,6 +1184,14 @@ component Table {
         root.keyboard = true;
         root.key(key);
         root.reveal();
+    }
+
+    // Left or Right along the headers, over a column a PC without that GPU hides.
+    function move-column(by: int) {
+        root.column = max(0, min(Columns.titles.length, root.column + by));
+        if root.column > 0 && Columns.widths[root.column - 1] == 0 {
+            root.column += by;
+        }
     }
 
     public function focus-search() {
@@ -1021,70 +1252,70 @@ component Table {
             }
         }
         // The header: Breeze's column dividers, or SebChat's small muted labels over a thick line.
-        Rectangle {
+        // One Tab stop: Left and Right move between the columns, Enter or Space sorts.
+        header := FocusScope {
             height: Theme.picnic ? 31px : 29px;
-            background: Theme.picnic ? transparent : Theme.view;
-            clip: true;
-            Rectangle {
-                y: 0;
-                height: 1px;
-                visible: !Theme.picnic;
-                background: Theme.line;
-            }
-            Rectangle {
-                y: parent.height - self.height;
-                height: Theme.picnic ? 3px : 1px;
-                background: Theme.line;
-            }
-            // Scrolls sideways with the rows.
-            HorizontalLayout {
-                x: view.content-x;
-                width: root.content-width;
-                Rectangle {
-                    horizontal-stretch: 1;
-                    Label {
-                        x: 8px;
-                        text: "Name";
-                        font-size: Theme.picnic ? Theme.small : Theme.font-size;
-                        font-weight: Theme.picnic ? 800 : 400;
-                        color: Theme.picnic ? Theme.muted : Theme.fg;
-                    }
+            focus-on-click: false;
+            accessible-role: list;
+            accessible-label: "Columns";
+            accessible-item-count: Columns.titles.length + 1;
+            accessible-delegate-focus: root.column;
+            key-pressed(event) => {
+                if event.modifiers.control || event.modifiers.alt {
+                    return reject;
                 }
-                for title[i] in Columns.titles: Rectangle {
-                    width: Columns.widths[i];
-                    visible: self.width > 0;
-                    Rectangle {
-                        x: -1px;
-                        width: 1px;
-                        y: 1px;
-                        height: parent.height - 2px;
-                        visible: !Theme.picnic;
-                        background: Theme.line;
+                if event.text == Key.LeftArrow {
+                    root.move-column(-1);
+                } else if event.text == Key.RightArrow {
+                    root.move-column(1);
+                } else if event.text == Key.Home {
+                    root.column = 0;
+                } else if event.text == Key.End {
+                    root.column = Columns.titles.length;
+                } else if event.text == Key.Return || event.text == " " {
+                    if root.column > 0 {
+                        root.sort(root.column - 1);
                     }
-                    HorizontalLayout {
-                        padding-right: 8px;
-                        spacing: 4px;
-                        alignment: end;
-                        Label {
-                            text: title;
-                            font-size: Theme.picnic ? Theme.small : Theme.font-size;
-                            font-weight: Theme.picnic ? 800 : 400;
-                            color: Theme.picnic ? Theme.muted : Theme.fg;
-                        }
-                        // Down: largest first.
-                        if i == root.sort-column: VerticalLayout {
-                            alignment: center;
-                            Chevron {
-                                width: 10px;
-                                height: 10px;
-                                open: true;
-                                up: root.sort-ascending;
-                                color: Theme.picnic ? Theme.muted : Theme.fg;
-                            }
-                        }
+                } else {
+                    return reject;
+                }
+                accept
+            }
+            Rectangle {
+                background: Theme.picnic ? transparent : Theme.view;
+                clip: true;
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    visible: !Theme.picnic;
+                    background: Theme.line;
+                }
+                Rectangle {
+                    y: parent.height - self.height;
+                    height: Theme.picnic ? 3px : 1px;
+                    background: Theme.line;
+                }
+                // Scrolls sideways with the rows.
+                HorizontalLayout {
+                    x: view.content-x;
+                    width: root.content-width;
+                    HeaderCell {
+                        horizontal-stretch: 1;
+                        name: true;
+                        title: "Name";
+                        about: Columns.name-about;
+                        index: 0;
+                        focused: header.has-focus && root.column == 0;
                     }
-                    TouchArea {
-                        mouse-cursor: pointer;
+                    for title[i] in Columns.titles: HeaderCell {
+                        width: Columns.widths[i];
+                        visible: self.width > 0;
+                        title: title;
+                        about: Columns.abouts[i];
+                        index: i + 1;
+                        sorted: i == root.sort-column;
+                        ascending: root.sort-ascending;
+                        focused: header.has-focus && root.column == i + 1;
                         clicked => {
                             root.sort(i);
                         }
@@ -1241,7 +1472,7 @@ export component MainWindow inherits Window {
 
     // Ctrl+F finds an app from anywhere in the window; Escape clears the search.
     keys := FocusScope {
-        // Tab goes from the menu button to the search field to the table.
+        // Tab goes from the menu button to the tiles, the search field, the header and the table.
         focus-on-tab-navigation: false;
         key-pressed(event) => {
             if event.modifiers.control && (event.text == "f" || event.text == "F") {
@@ -1310,60 +1541,66 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-                HorizontalLayout {
-                    spacing: root.gap;
+                // As short as the taller of the tiles and the bars allow, leaving the rest to
+                // the table.
+                Rectangle {
                     vertical-stretch: 0;
-                    // As short as the taller of the tiles and the bars allow, leaving the rest
-                    // to the table.
-                    height: self.min-height;
-                    // The tiles first, two by two in a wide window, so the top stays as short
-                    // as the bars; they share out the bars' height when the bars are taller.
-                    GridLayout {
-                        width: root.tiles-width;
+                    height: top.min-height;
+                    top := HorizontalLayout {
                         spacing: root.gap;
-                        for tile[i] in root.tiles: TileView {
-                            tile: tile;
-                            // Fixed: the grid would otherwise give the columns unequal widths.
-                            width: 180px;
-                            row: root.wide ? floor(i / 2) : i;
-                            col: root.wide ? mod(i, 2) : 0;
+                        // The tiles first, two by two in a wide window, so the top stays as short
+                        // as the bars; they share out the bars' height when the bars are taller.
+                        // Their room only: the tiles come after the bars, so Tab reaches the menu
+                        // button first.
+                        tiles-room := Rectangle {
+                            width: root.tiles-width;
+                            min-height: tiles.needs;
                         }
-                    }
-                    // The bars' card runs as deep as the tiles beside it; the bars share out
-                    // the spare height in equal gaps, so the last legend ends on the card's edge.
-                    Card {
-                        inset: root.bars-inset;
-                        BarView {
-                            bar: root.memory;
-                            bar-width: root.bar-width;
-                            // Hangs 6 px into the card's inset.
-                            Rectangle {
-                                width: 30px;
-                                MenuButton {
-                                    x: 6px;
-                                    y: (parent.height - self.height) / 2;
-                                    chosen(choice) => {
-                                        root.theme-chosen(choice);
+                        // The bars' card runs as deep as the tiles beside it; the bars share out
+                        // the spare height in equal gaps, so the last legend ends on the card's edge.
+                        Card {
+                            inset: root.bars-inset;
+                            BarView {
+                                bar: root.memory;
+                                bar-width: root.bar-width;
+                                // Hangs 6 px into the card's inset.
+                                Rectangle {
+                                    width: 30px;
+                                    MenuButton {
+                                        x: 6px;
+                                        y: (parent.height - self.height) / 2;
+                                        chosen(choice) => {
+                                            root.theme-chosen(choice);
+                                        }
                                     }
                                 }
                             }
+                            Rectangle {
+                                min-height: Theme.picnic ? 18px : 14px;
+                                vertical-stretch: 1;
+                            }
+                            BarView {
+                                bar: root.swap;
+                                bar-width: root.bar-width;
+                            }
+                            if root.has-vram: Rectangle {
+                                min-height: Theme.picnic ? 18px : 14px;
+                                vertical-stretch: 1;
+                            }
+                            if root.has-vram: BarView {
+                                bar: root.vram;
+                                bar-width: root.bar-width;
+                            }
                         }
-                        Rectangle {
-                            min-height: Theme.picnic ? 18px : 14px;
-                            vertical-stretch: 1;
-                        }
-                        BarView {
-                            bar: root.swap;
-                            bar-width: root.bar-width;
-                        }
-                        if root.has-vram: Rectangle {
-                            min-height: Theme.picnic ? 18px : 14px;
-                            vertical-stretch: 1;
-                        }
-                        if root.has-vram: BarView {
-                            bar: root.vram;
-                            bar-width: root.bar-width;
-                        }
+                    }
+                    tiles := TileStrip {
+                        x: tiles-room.x;
+                        y: tiles-room.y;
+                        width: tiles-room.width;
+                        height: tiles-room.height;
+                        tiles: root.tiles;
+                        wide: root.wide;
+                        gap: root.gap;
                     }
                 }
                 // The Apps card: the search line, then the table clipped to the card's corners.
@@ -1401,5 +1638,15 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
+
+    // Over everything, so neither the cards nor the rows cover them.
+    if tiles.tip.shown: FocusTip {
+        tip: tiles.tip;
+        room: root.width;
+    }
+    if table.tip.shown: FocusTip {
+        tip: table.tip;
+        room: root.width;
     }
 }
