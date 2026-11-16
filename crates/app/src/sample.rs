@@ -27,6 +27,8 @@ fn app(
         name: name.into(),
         detail: detail.into(),
         icon: icon.into(),
+        groups: Vec::new(),
+        pids: Vec::new(),
         ram,
         zswap: None,
         swap,
@@ -88,6 +90,8 @@ pub fn snapshot() -> Snapshot {
             ],
             unattributed_ram: b(1.2, G),
             unattributed_swap: b(296.0, M),
+            groups: vec!["emulator-guide35.service".into()],
+            pids: vec![4130176, 4130195, 4130291],
             ..app(
                 "Android emulator",
                 "· guide35",

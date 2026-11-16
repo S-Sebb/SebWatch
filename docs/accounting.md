@@ -150,6 +150,9 @@ the cgroup root, the same key the memory numbers use.
 - CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %.
   A sleeping NVIDIA GPU isn't read: the GPU and VRAM tiles say it is asleep, and the table's
   GPU and VRAM columns show "—". Disk tile: every app's read + write.
+- **Search** matches an app's display name, its grouping name and its groups' names (part of
+  them, any case), or a whole PID from its groups' `cgroup.procs`, read every refresh for every
+  app (the first group's was already read to name the app).
 - An expanded app reads its processes (`processes.rs`) only while expanded; its rows plus
   "Kernel memory and zswap (not per process)" sum to its RAM in use. That row's swap is the
   app's swap minus its processes' swap. An app of several groups lists each group, then its

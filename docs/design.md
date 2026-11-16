@@ -40,6 +40,11 @@ Top to bottom:
    order is remembered in the settings file; SebChat's "Apps" title row says "sorted by …".
    Ties keep RAM's order. Expanding an app shows its processes and child groups.
    An app has one colour in every bar and on its row (seven series colours).
+   A search field above the table (magnifier, "Ctrl+F" hint; in SebChat in the "Apps" title
+   row) filters it by part of an app's name or group name, or a whole PID. Ctrl+F focuses it,
+   Escape or its clear button empties it. While it filters, every app found shows (none folded
+   into "N more apps") and a chip reads "Filtered: N of M apps · the bars show the whole system";
+   the bars and tiles don't change.
 5. Small headline tiles for CPU, GPU, VRAM and disk beside the bars, under the menu button.
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.

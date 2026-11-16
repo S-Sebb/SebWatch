@@ -1,6 +1,6 @@
 //! The window drawn offscreen by Slint's software renderer, in each theme, with the Android
 //! emulator's bar segment hovered and its row expanded, then with the NVIDIA GPU asleep, then
-//! sorted by swap both ways, plus Breeze Light with the menu open, and one of this PC's live
+//! sorted by swap both ways, then searched for "k" from the keyboard, plus Breeze Light with the menu open, and one of this PC's live
 //! reading.
 //! Nothing shows on the screen. Run with `scripts/screenshots <dir>`.
 
@@ -8,6 +8,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
+use slint::platform::Key;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model, PhysicalSize, Rgb8Pixel};
@@ -63,6 +64,20 @@ impl Shot {
             self.window
                 .dispatch_event(WindowEvent::PointerReleased { position, button });
         }
+    }
+
+    fn key(&self, text: impl Into<slint::SharedString>, pressed: bool) {
+        let text = text.into();
+        self.window.dispatch_event(if pressed {
+            WindowEvent::KeyPressed { text }
+        } else {
+            WindowEvent::KeyReleased { text }
+        });
+    }
+
+    fn tap(&self, text: impl Into<slint::SharedString> + Clone) {
+        self.key(text.clone(), true);
+        self.key(text, false);
     }
 
     fn save(&self, pixels: &[Rgb8Pixel], path: &std::path::Path) {
@@ -156,6 +171,17 @@ fn screenshots() {
             &dir.join(format!("sort-swap-up-{name}.png")),
         );
         ui.invoke_sort_clicked(0);
+
+        // Ctrl+F, then "k": five apps, three of them from the fold. Escape clears it.
+        shot.key(Key::Control, true);
+        shot.tap("f");
+        shot.key(Key::Control, false);
+        shot.tap("k");
+        assert_eq!(ui.get_search(), "k");
+        shot.save(&shot.render(), &dir.join(format!("search-{name}.png")));
+        shot.tap(Key::Escape);
+        assert_eq!(ui.get_search(), "");
+        assert_eq!(ui.get_filtered(), "");
 
         if choice == ThemeChoice::Light {
             shot.pointer(1000.0 - 16.0 - 15.0, 14.0 + 15.0, true);

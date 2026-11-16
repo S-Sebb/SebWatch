@@ -24,4 +24,6 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   bar. Seb, 2026-11-15; summary removed and VRAM bar added by Seb, 2026-11-16. The app table
   sorts by any numeric column (chevron on the sorted column, click again to reverse,
   remembered), and the swap and VRAM bars name their own top five, an app keeping one colour
-  everywhere (mockup approved, #33). Seb, 2026-11-16.
+  everywhere (mockup approved, #33). A search field above the table (Ctrl+F, Escape clears)
+  filters it by app name, group or PID while the bars stay system-wide (mockup approved, #34).
+  Seb, 2026-11-16.
