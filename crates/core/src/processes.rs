@@ -18,7 +18,7 @@ const TICKS_PER_SEC: f64 = 100.0;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Process {
     pub pid: u32,
-    /// `comm`: the kernel's short process name.
+    /// See [`full_name`].
     pub name: String,
     /// `Pss_Anon + Pss_Shmem`: the process's share of the app's RAM in use. `None` when
     /// `smaps_rollup` is unreadable (another user's process).
@@ -55,7 +55,7 @@ fn read_process(dir: &Path, pid: u32) -> Option<Process> {
     let stat = fs::read_to_string(dir.join("stat")).ok()?;
     // `pid (comm) state ...`: comm may hold spaces and parentheses, so split at the last `)`.
     let (head, rest) = stat.rsplit_once(')')?;
-    let name = head.split_once('(')?.1.to_string();
+    let name = full_name(dir, head.split_once('(')?.1);
     let fields: Vec<&str> = rest.split_whitespace().collect();
     // Fields after comm start at field 3 (state): utime is 14, stime 15, starttime 22.
     let field = |n: usize| fields.get(n - 3)?.parse::<u64>().ok();
@@ -84,6 +84,34 @@ fn read_process(dir: &Path, pid: u32) -> Option<Process> {
         cpu_ticks,
         start_time,
     })
+}
+
+/// `comm` is the kernel's process name cut to 15 bytes. A name that long may be cut, so it is
+/// completed from the base name of `argv[0]` (`cmdline`), else of `exe`, when that starts with
+/// it (a process can rewrite its `argv[0]`). `dir` is the process's procfs directory.
+pub fn full_name(dir: &Path, comm: &str) -> String {
+    const COMM_LEN: usize = 15;
+    if comm.len() < COMM_LEN {
+        return comm.to_owned();
+    }
+    let argv0 = fs::read(dir.join("cmdline")).ok().and_then(|cmdline| {
+        let argv0 = cmdline.split(|&b| b == 0).next()?;
+        Some(String::from_utf8_lossy(argv0).into_owned())
+    });
+    let exe = || {
+        Some(
+            fs::read_link(dir.join("exe"))
+                .ok()?
+                .to_string_lossy()
+                .into_owned(),
+        )
+    };
+    argv0
+        .into_iter()
+        .chain(std::iter::once_with(exe).flatten())
+        .map(|path| path.rsplit('/').next().unwrap_or_default().to_owned())
+        .find(|name| name.len() > COMM_LEN && name.starts_with(comm))
+        .unwrap_or_else(|| comm.to_owned())
 }
 
 /// The rows under an expanded app.
@@ -312,5 +340,51 @@ mod tests {
         assert_eq!(d.groups[0].cpu_cores, 0.0);
         // Processes over the app's charge (pages shared across apps): no remainder, no underflow.
         assert_eq!(d.kernel_and_zswap, 0);
+    }
+
+    #[test]
+    fn cut_names_are_completed_from_cmdline_or_exe() {
+        let fx = Fixture::new("names");
+        let group = PathBuf::from("app.scope");
+        fx.group("app.scope", &[1, 2, 3, 4, 5]);
+        for (pid, comm) in [
+            (1, "xdg-desktop-por"),
+            (2, "gnome-calendar-"),
+            (3, "Isolated Web Co"),
+            (4, "kded6"),
+            (5, "unreadable-name"),
+        ] {
+            fx.process(pid, comm, 0, 1, Some((1, 0, 0)));
+        }
+        let proc = |pid: u32, file: &str| fx.0.join("proc").join(pid.to_string()).join(file);
+        fs::write(
+            proc(1, "cmdline"),
+            "/usr/libexec/xdg-desktop-portal\0--verbose\0",
+        )
+        .unwrap();
+        // Empty cmdline (a zombie): the exe link.
+        fs::write(proc(2, "cmdline"), "").unwrap();
+        std::os::unix::fs::symlink("/usr/libexec/gnome-calendar-server", proc(2, "exe")).unwrap();
+        // A rewritten argv[0] that isn't the program: the short name stays.
+        fs::write(
+            proc(3, "cmdline"),
+            "/usr/lib/firefox/firefox -contentproc\0",
+        )
+        .unwrap();
+        // Short names never read cmdline.
+        fs::write(proc(4, "cmdline"), "/usr/bin/kded6-not-this\0").unwrap();
+
+        let sample = fx.sample(std::slice::from_ref(&group));
+        let names: Vec<_> = sample[&group].iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "xdg-desktop-portal",
+                "gnome-calendar-server",
+                "Isolated Web Co",
+                "kded6",
+                "unreadable-name"
+            ]
+        );
     }
 }
