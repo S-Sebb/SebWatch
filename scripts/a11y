@@ -6,6 +6,7 @@
 # and Kill name it, that Kill asks first with Cancel focused (cancelled: nothing is ended or
 # killed), and that Pause turns into Resume with its strip. One line per check; the tree in
 # target/logs/a11y-tree.txt, other logs beside it.
+# SEBWATCH_PRESSURE=18 (debug builds) stands in for the memory pressure, to check the chip.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -84,7 +85,7 @@ sleep 1
 kill -0 "${pids[-1]}" 2>/dev/null || { echo "FAIL app exited (see $logs/a11y-app.log)"; exit 1; }
 
 timeout 60 python3 -I - "$logs/a11y-tree.txt" <<'EOF'
-import sys, time
+import os, sys, time
 import pyatspi
 from gi.repository import GLib
 
@@ -155,10 +156,15 @@ check("tiles have names, values and what they measure",
       and tiles[-1]["description"].endswith(". Data read and written per second on all disks."),
       tiles)
 headers = items_of("Columns")
+# The pinned Name cell is drawn over the scrolling ones (#78), so it comes last in the tree; the
+# keyboard still moves through the columns in order (accessible-item-index).
+about = {h["name"]: h["description"] for h in headers}
+figures = [h["name"] for h in headers if h["name"] != "Name"]
 check("headers say what they measure",
-      [h["name"] for h in headers][:2] == ["Name", "RAM in use"] and headers[-1]["name"] == "VRAM"
-      and headers[1]["description"] == "RAM the app holds, counting its kernel memory and zswap."
-      and headers[-1]["description"] == "Dedicated GPU memory the app holds.",
+      about.get("Name") == "An app and everything it started; the arrow shows its processes."
+      and figures[:1] == ["RAM in use"] and figures[-1:] == ["VRAM"]
+      and about["RAM in use"] == "RAM the app holds, counting its kernel memory and zswap."
+      and about["VRAM"] == "Dedicated GPU memory the app holds.",
       headers)
 
 # A refresh (every 2 s) updates the rows in place: a screen reader's row stays the same object.
@@ -261,6 +267,10 @@ check("menu items", names == ["System", "Light", "Dark", "SebChat"] and len(chec
 # key and text.
 info = [n for n in nodes if n["role"] == "button" and n["name"] == "Memory pressure and swap"]
 check("swap popup button", len(info) == 1, f"{len(info)} buttons named Memory pressure and swap")
+chips = [n for n in nodes if n["role"] == "button" and n["name"] == "Memory pressure high"]
+avg10 = os.environ.get("SEBWATCH_PRESSURE") or open("/proc/pressure/memory").read().split("avg10=")[1].split()[0]
+high = float(avg10) >= 10
+check("pressure chip only while pressure is high", len(chips) == high, f"{len(chips)} chips, avg10 {avg10}")
 if info:
     info[0]["node"].queryAction().doAction(0)
     time.sleep(1)
