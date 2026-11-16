@@ -169,7 +169,11 @@ mod tests {
         let file = base.join("breeze/mimetypes/32/application-x-executable.svg");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "<svg/>").unwrap();
-        let found = lookup(SERVICE_ICON, &[base.clone()], &["breeze".into()]);
+        let found = lookup(
+            SERVICE_ICON,
+            std::slice::from_ref(&base),
+            &["breeze".into()],
+        );
         std::fs::remove_dir_all(&base).unwrap();
         assert_eq!(found, None);
     }

@@ -516,10 +516,11 @@ fn tiles(s: &Snapshot) -> Vec<Tile> {
         unit: format!("of {} cores", s.cpu_cores).into(),
         fraction: s.cpu_used / s.cpu_cores.max(1) as f32,
     }];
-    // A sleeping GPU keeps its tiles, with a dash for the figures not read.
+    // A sleeping GPU keeps its tiles, saying so in place of the figures not read (no value: the
+    // words need the tile's width).
     if let Some(nvidia) = s.nvidia_percent {
         let (value, nvidia_unit) = if s.gpu_asleep {
-            (NONE.into(), "NVIDIA asleep")
+            (String::new(), "NVIDIA asleep")
         } else {
             (percent(nvidia), "NVIDIA")
         };
@@ -544,7 +545,7 @@ fn tiles(s: &Snapshot) -> Vec<Tile> {
     } else if s.gpu_asleep {
         tiles.push(Tile {
             name: "VRAM".into(),
-            value: NONE.into(),
+            value: "".into(),
             unit: "GPU asleep".into(),
             fraction: 0.0,
         });
@@ -678,8 +679,8 @@ mod tests {
             .iter()
             .map(|t| (t.name.as_str(), t.value.as_str(), t.unit.as_str()))
             .collect();
-        assert!(tiles.contains(&("GPU", NONE, "NVIDIA asleep · 3% Intel")));
-        assert!(tiles.contains(&("VRAM", NONE, "GPU asleep")));
+        assert!(tiles.contains(&("GPU", "", "NVIDIA asleep · 3% Intel")));
+        assert!(tiles.contains(&("VRAM", "", "GPU asleep")));
         assert!(
             asleep
                 .rows

@@ -27,7 +27,8 @@ parent's group, so a build an agent starts is charged to that agent.
   else the matching `.desktop` file's `Name`/`Icon` (desktop id or Flatpak id, searched in the
   XDG data dirs and Flatpak exports), else the unit file's `Description=` (read from disk, also
   from the `foo@.service` template), else the cleaned name. Without a desktop file the icon is
-  the generic `application-x-executable`. Results are cached per leaf name.
+  the generic `application-x-executable`, which the window draws as its own gear icon
+  (`crates/app/icons/generic-app.svg`). Results are cached per leaf name.
 
 ## Memory per app (`memory.stat`, bytes)
 
@@ -123,8 +124,9 @@ the cgroup root, the same key the memory numbers use.
   legend.
 - Sizes are binary with KDE's short names (1 GB = 1024 MB); a unit steps up at 1000 of the one
   below, so no figure has four digits.
-- CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %;
-  a sleeping NVIDIA GPU shows 0% and no VRAM tile. Disk tile: every app's read + write.
+- CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %.
+  A sleeping NVIDIA GPU isn't read: the GPU and VRAM tiles say it is asleep, and the table's
+  GPU and VRAM columns show "—". Disk tile: every app's read + write.
 - An expanded app reads its processes (`processes.rs`) only while expanded; its rows plus
   "Kernel memory and zswap (not per process)" sum to its RAM in use. That row's swap is the
   app's swap minus its processes' swap. An app of several groups lists each group, then its
