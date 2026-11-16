@@ -2,7 +2,7 @@
 //!
 //! [`read_sample`] reads every process of the app's groups (`AppMemory::cgroups`); [`drill_down`]
 //! turns two samples one refresh apart into rows whose RAM plus
-//! [`DrillDown::kernel_and_zswap`] sums to the app's RAM in use. Sizes are bytes.
+//! [`DrillDown::not_attributed`] sums to the app's RAM in use. Sizes are bytes.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,10 +21,12 @@ pub struct Process {
     /// See [`full_name`].
     pub name: String,
     /// `Pss_Anon + Pss_Shmem`: the process's share of the app's RAM in use. `None` when
-    /// `smaps_rollup` is unreadable (another user's process).
+    /// `smaps_rollup` is unreadable, see `unreadable`.
     pub ram: Option<u64>,
     /// `SwapPss`. `None` as for `ram`.
     pub swap: Option<u64>,
+    /// Why `smaps_rollup` couldn't be read: `PermissionDenied` for another user's process.
+    pub unreadable: Option<io::ErrorKind>,
     /// `utime + stime`, all threads, in ticks.
     cpu_ticks: u64,
     /// Start time in ticks since boot: tells a reused PID from the process seen before.
@@ -61,7 +63,7 @@ fn read_process(dir: &Path, pid: u32) -> Option<Process> {
     let field = |n: usize| fields.get(n - 3)?.parse::<u64>().ok();
     let (cpu_ticks, start_time) = (field(14)? + field(15)?, field(22)?);
 
-    let (ram, swap) = match fs::read_to_string(dir.join("smaps_rollup")) {
+    let (ram, swap, unreadable) = match fs::read_to_string(dir.join("smaps_rollup")) {
         Ok(rollup) => {
             let kb = |key: &str| {
                 rollup
@@ -71,16 +73,21 @@ fn read_process(dir: &Path, pid: u32) -> Option<Process> {
                     .unwrap_or(0)
                     * 1024
             };
-            (Some(kb("Pss_Anon") + kb("Pss_Shmem")), Some(kb("SwapPss")))
+            (
+                Some(kb("Pss_Anon") + kb("Pss_Shmem")),
+                Some(kb("SwapPss")),
+                None,
+            )
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => return None, // exited mid-read
-        Err(_) => (None, None),
+        Err(e) => (None, None, Some(e.kind())),
     };
     Some(Process {
         pid,
         name,
         ram,
         swap,
+        unreadable,
         cpu_ticks,
         start_time,
     })
@@ -119,9 +126,15 @@ pub fn full_name(dir: &Path, comm: &str) -> String {
 pub struct DrillDown {
     /// The app's groups, biggest RAM first; an app of one group has one.
     pub groups: Vec<GroupRows>,
-    /// "Kernel memory and zswap (not per process)": the app's RAM in use minus its processes'
-    /// RAM, so the rows sum to the app's total.
-    pub kernel_and_zswap: u64,
+    /// "Not attributed to processes": the app's RAM in use minus its processes' RAM, so the
+    /// rows sum to the app's total. It holds the groups' kernel memory and zswap, which no
+    /// process owns, and the memory of processes that couldn't be read
+    /// ([`ProcessRow::unreadable`]).
+    pub not_attributed: u64,
+    /// How far the processes' RAM exceeds the app's, where it does (`not_attributed` is 0 then):
+    /// PSS splits pages shared with other apps' processes, while the cgroup charges each page to
+    /// one group.
+    pub over_charge: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,6 +155,8 @@ pub struct ProcessRow {
     pub name: String,
     pub ram: Option<u64>,
     pub swap: Option<u64>,
+    /// See [`Process::unreadable`].
+    pub unreadable: Option<io::ErrorKind>,
     /// 1.0 = one core busy for the whole interval.
     pub cpu_cores: f64,
 }
@@ -172,6 +187,7 @@ pub fn drill_down(app_ram: u64, prev: &Sample, cur: &Sample, elapsed: Duration) 
                         name: p.name.clone(),
                         ram: p.ram,
                         swap: p.swap,
+                        unreadable: p.unreadable,
                         cpu_cores,
                     }
                 })
@@ -187,12 +203,11 @@ pub fn drill_down(app_ram: u64, prev: &Sample, cur: &Sample, elapsed: Duration) 
         })
         .collect();
     groups.sort_by(|a, b| b.ram.cmp(&a.ram).then_with(|| a.path.cmp(&b.path)));
-    // Saturating: PSS splits pages shared with other apps' processes, while the cgroup charges
-    // each page to one group, so the processes can exceed the app by a little.
     let processes_ram: u64 = groups.iter().map(|g| g.ram).sum();
     DrillDown {
         groups,
-        kernel_and_zswap: app_ram.saturating_sub(processes_ram),
+        not_attributed: app_ram.saturating_sub(processes_ram),
+        over_charge: processes_ram.saturating_sub(app_ram),
     }
 }
 
@@ -321,12 +336,15 @@ mod tests {
         // The other user's process is listed with its CPU but no memory.
         assert_eq!(d.groups[1].path, agent_b);
         assert_eq!(d.groups[1].processes[0].ram, None);
+        assert!(d.groups[1].processes[0].unreadable.is_some());
+        assert_eq!(d.groups[0].processes[0].unreadable, None);
         assert_eq!(d.groups[1].cpu_cores, 0.5);
         assert_eq!(d.groups.len(), 2);
 
         let rows_ram: u64 = d.groups.iter().map(|g| g.ram).sum();
-        assert_eq!(rows_ram + d.kernel_and_zswap, app_ram);
-        assert_eq!(d.kernel_and_zswap, 108 * 1024);
+        assert_eq!(rows_ram + d.not_attributed, app_ram);
+        assert_eq!(d.not_attributed, 108 * 1024);
+        assert_eq!(d.over_charge, 0);
     }
 
     #[test]
@@ -338,8 +356,9 @@ mod tests {
         let cur = fx.sample(std::slice::from_ref(&group));
         let d = drill_down(0, &Sample::new(), &cur, Duration::from_secs(1));
         assert_eq!(d.groups[0].cpu_cores, 0.0);
-        // Processes over the app's charge (pages shared across apps): no remainder, no underflow.
-        assert_eq!(d.kernel_and_zswap, 0);
+        // Processes over the app's charge (pages shared across apps): no remainder, no
+        // underflow, and the excess is reported.
+        assert_eq!((d.not_attributed, d.over_charge), (0, 1024));
     }
 
     #[test]

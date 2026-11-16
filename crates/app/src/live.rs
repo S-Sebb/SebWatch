@@ -11,7 +11,7 @@ use sebwatch_core::naming::{AppName, Naming, SERVICE_ICON};
 use sebwatch_core::nvidia::{self, Nvidia};
 use sebwatch_core::processes;
 
-use crate::model::{App, Part, Snapshot};
+use crate::model::{App, Part, Snapshot, Unreadable};
 
 pub struct Reader {
     naming: Naming,
@@ -77,6 +77,7 @@ impl Reader {
                 (!used.is_empty()).then(|| used.into_iter().map(f).sum::<f64>())
             };
             let (mut parts, mut unattributed_ram, mut unattributed_swap) = (Vec::new(), 0, 0);
+            let (mut over_charge, mut unreadable) = (0, Vec::new());
             if expanded.contains(&app.name) {
                 let now = Instant::now();
                 let sample = processes::read_sample(root, Path::new(PROC_ROOT), &app.cgroups);
@@ -110,7 +111,20 @@ impl Reader {
                         disk_per_s: None,
                     }));
                 }
-                unattributed_ram = drill.kernel_and_zswap;
+                unattributed_ram = drill.not_attributed;
+                over_charge = drill.over_charge;
+                unreadable = drill
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.processes)
+                    .filter_map(|p| {
+                        Some(Unreadable {
+                            name: p.name.clone(),
+                            pid: p.pid,
+                            denied: p.unreadable? == io::ErrorKind::PermissionDenied,
+                        })
+                    })
+                    .collect();
                 let process_swap: u64 = drill.groups.iter().map(|g| g.swap).sum();
                 unattributed_swap = app.swap.saturating_sub(process_swap);
                 self.drills.insert(app.name.clone(), (now, sample));
@@ -137,6 +151,8 @@ impl Reader {
                 parts,
                 unattributed_ram,
                 unattributed_swap,
+                over_charge,
+                unreadable,
             });
         }
 

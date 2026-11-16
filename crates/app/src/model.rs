@@ -63,9 +63,21 @@ pub struct App {
     pub gpu_percent: Option<f32>,
     pub vram: Option<u64>,
     pub parts: Vec<Part>,
-    /// Kernel memory and zswap charged to the app but to none of its processes.
+    /// Charged to the app but to none of the processes read: kernel memory, zswap and the
+    /// memory of `unreadable`.
     pub unattributed_ram: u64,
     pub unattributed_swap: u64,
+    /// How far the processes' RAM exceeds the app's (`unattributed_ram` is 0 then).
+    pub over_charge: u64,
+    /// The processes whose memory couldn't be read, as `parts` lists them.
+    pub unreadable: Vec<Unreadable>,
+}
+
+pub struct Unreadable {
+    pub name: String,
+    pub pid: u32,
+    /// Refused: another user's process. Otherwise the read failed some other way.
+    pub denied: bool,
 }
 
 /// A row under an expanded app: one of its groups (when it has several), or a process.
@@ -335,6 +347,7 @@ impl View {
             disk: rate(app.disk_per_s).into(),
             gpu: app.gpu_percent.map_or(NONE.into(), percent).into(),
             vram: app.vram.map_or(NONE.into(), bytes).into(),
+            tip: "".into(),
         });
         if !expanded {
             return;
@@ -357,16 +370,66 @@ impl View {
                 ..empty_row()
             });
         }
-        if app.unattributed_ram + app.unattributed_swap > 0 {
-            rows.push(Row {
-                kind: RowKind::Kernel,
-                depth: 1,
-                name: "Kernel memory and zswap (not per process)".into(),
-                ram: bytes(app.unattributed_ram).into(),
-                swap: bytes(app.unattributed_swap).into(),
-                ..empty_row()
-            });
+        if app.unattributed_ram + app.unattributed_swap + app.over_charge > 0
+            || !app.unreadable.is_empty()
+        {
+            rows.push(leftover_row(app));
         }
+    }
+}
+
+/// The expanded app's last row: what is charged to it but to none of its processes it read.
+fn leftover_row(app: &App) -> Row {
+    let mut name = "Not attributed to processes".to_string();
+    let mut tip = format!(
+        "Memory charged to {} but to none of its processes",
+        app.name
+    );
+    if !app.unreadable.is_empty() {
+        name += &format!(" · {} unreadable", app.unreadable.len());
+        tip += " it could read";
+    }
+    tip += ": kernel memory and zswap for the app";
+    let (denied, failed): (Vec<_>, Vec<_>) = app.unreadable.iter().partition(|u| u.denied);
+    let list = |procs: &[&Unreadable]| {
+        procs
+            .iter()
+            .map(|u| format!("{} ({})", u.name, u.pid))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !denied.is_empty() {
+        let (runs, it) = if denied.len() == 1 {
+            ("runs", "it")
+        } else {
+            ("run", "them")
+        };
+        tip += &format!(
+            ", and {}, which {runs} as another user so SebWatch may not read {it}",
+            list(&denied)
+        );
+    }
+    if !failed.is_empty() {
+        tip += &format!(", and {}, whose memory could not be read", list(&failed));
+    }
+    tip += ".";
+    if app.over_charge > 0 {
+        name += &format!(" · processes show {} more", bytes(app.over_charge));
+        tip += &format!(
+            " Its processes add up to {} more than {} is charged for: they share pages with \
+             other apps' processes, and the kernel charges each shared page to one app.",
+            bytes(app.over_charge),
+            app.name
+        );
+    }
+    Row {
+        kind: RowKind::Kernel,
+        depth: 1,
+        name: name.into(),
+        ram: bytes(app.unattributed_ram).into(),
+        swap: bytes(app.unattributed_swap).into(),
+        tip: tip.into(),
+        ..empty_row()
     }
 }
 
@@ -440,6 +503,7 @@ fn empty_row() -> Row {
         disk: none.clone(),
         gpu: none.clone(),
         vram: none,
+        tip: "".into(),
     }
 }
 
@@ -561,10 +625,10 @@ fn memory_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
         ),
         segment(
             SegmentKind::Kernel,
-            "Kernel and drivers",
+            "Kernel, drivers and unattributed",
             s.kernel,
             total,
-            &["everything not counted above".into()],
+            &["includes memory no app could be charged for".into()],
         ),
         segment(SegmentKind::Free, "Free", s.free, total, &[]),
     ]);
@@ -997,11 +1061,72 @@ mod tests {
         let collapsed = view.update(crate::sample::snapshot()).rows.len();
         view.toggle("Android emulator");
         let rows = view.render().rows;
-        assert_eq!(rows.len(), collapsed + 4);
+        assert_eq!(rows.len(), collapsed + 5);
         assert_eq!(rows[2].name, "qemu-system-x86_64");
-        assert_eq!(rows[5].kind, RowKind::Kernel);
-        assert_eq!(rows[5].depth, 1);
+        assert_eq!((rows[5].name.as_str(), rows[5].ram.as_str()), ("adb", NONE));
+        assert_eq!(rows[6].kind, RowKind::Kernel);
+        assert_eq!(rows[6].depth, 1);
         view.toggle("Android emulator");
         assert_eq!(view.render().rows.len(), collapsed);
+    }
+
+    /// The leftover row of the sample's Android emulator, changed by `edit`.
+    fn leftover(edit: impl FnOnce(&mut App)) -> Row {
+        let mut s = crate::sample::snapshot();
+        let app = s
+            .apps
+            .iter_mut()
+            .find(|a| a.key == "Android emulator")
+            .unwrap();
+        edit(app);
+        let mut view = View::default();
+        view.toggle("Android emulator");
+        let rows = view.update(s).rows;
+        rows.into_iter()
+            .find(|r| r.kind == RowKind::Kernel)
+            .unwrap()
+    }
+
+    #[test]
+    fn leftover_row_says_what_it_holds() {
+        let none = leftover(|a| a.unreadable.clear());
+        assert_eq!(none.name, "Not attributed to processes");
+        assert_eq!(none.ram, "1.2 GB");
+        assert_eq!(
+            none.tip,
+            "Memory charged to Android emulator but to none of its processes: kernel memory and \
+             zswap for the app."
+        );
+
+        let some = leftover(|a| {
+            a.unreadable.push(Unreadable {
+                name: "helper".into(),
+                pid: 7,
+                denied: false,
+            })
+        });
+        assert_eq!(some.name, "Not attributed to processes · 2 unreadable");
+        assert_eq!(
+            some.tip,
+            "Memory charged to Android emulator but to none of its processes it could read: \
+             kernel memory and zswap for the app, and adb (4130302), which runs as another user \
+             so SebWatch may not read it, and helper (7), whose memory could not be read."
+        );
+
+        let over = leftover(|a| {
+            a.unreadable.clear();
+            a.unattributed_ram = 0;
+            a.over_charge = 12 * 1024 * 1024;
+        });
+        assert_eq!(
+            over.name,
+            "Not attributed to processes · processes show 12 MB more"
+        );
+        assert_eq!(over.ram, "0");
+        assert!(over.tip.ends_with(
+            "Its processes add up to 12 MB more than Android emulator is charged for: they \
+             share pages with other apps' processes, and the kernel charges each shared page to \
+             one app."
+        ));
     }
 }
