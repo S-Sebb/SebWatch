@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Footprint of the release app: about a minute visible, then about a minute minimised, on a
+# headless KWin (`--virtual`) with its own D-Bus session, so nothing shows on the desktop.
+# Prints one line per phase: CPU time as % of one core, and PSS in MB. Logs in target/logs/.
+# Usage: scripts/bench [seconds per phase, default 60]
+set -u
+cd "$(dirname "$0")/.."
+
+logs=$PWD/target/logs
+mkdir -p "$logs"
+seconds=${1:-60}
+
+if [ -z "${BENCH_SESSION:-}" ]; then
+    for tool in cargo kwin_wayland dbus-run-session gdbus; do
+        command -v "$tool" >/dev/null || { echo "MISSING: $tool not found"; exit 1; }
+    done
+    timeout 900 cargo build --release -p sebwatch >"$logs/bench-build.log" 2>&1 ||
+        { echo "FAIL build (see $logs/bench-build.log)"; exit 1; }
+    # A private session bus, so the virtual KWin doesn't meet the desktop's own KWin. It starts
+    # no services: portals started from it outlive it. Without the portal the app shows the
+    # light theme. Its output goes to a log, the results to a file.
+    bus=$logs/bench-bus.conf
+    cat >"$bus" <<'EOF'
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+    results=$logs/bench.txt
+    BENCH_SESSION=$results timeout $((2 * seconds + 90)) \
+        dbus-run-session --config-file="$bus" -- "$0" "$@" >"$logs/bench-session.log" 2>&1 </dev/null
+    status=$?
+    cat "$results"
+    [ "$status" = 124 ] && echo "FAIL timed out (see $logs/bench-session.log)"
+    exit "$status"
+fi
+exec >"$BENCH_SESSION"
+
+socket=sebwatch-bench-$$
+kwin_wayland --virtual --no-lockscreen --socket "$socket" --width 1280 --height 800 \
+    >"$logs/bench-kwin.log" 2>&1 &
+kwin=$!
+app=
+cleanup() {
+    [ -n "$app" ] && kill "$app" 2>/dev/null
+    kill "$kwin" 2>/dev/null
+    wait 2>/dev/null
+}
+trap cleanup EXIT
+
+for _ in $(seq 50); do
+    [ -S "$XDG_RUNTIME_DIR/$socket" ] && break
+    sleep 0.2
+done
+[ -S "$XDG_RUNTIME_DIR/$socket" ] || { echo "FAIL kwin did not start (see $logs/bench-kwin.log)"; exit 1; }
+
+env -u DISPLAY WAYLAND_DISPLAY="$socket" target/release/sebwatch >"$logs/bench-app.log" 2>&1 &
+app=$!
+
+ticks=$(getconf CLK_TCK)
+cpu_ticks() { awk '{ print $14 + $15 }' "/proc/$app/stat"; } # utime + stime, after the name
+pss_mb() { awk '/^Pss:/ { printf "%.1f", $2 / 1024 }' "/proc/$app/smaps_rollup"; }
+
+# Start-up and the first frames don't count.
+sleep 10
+kill -0 "$app" 2>/dev/null || { echo "FAIL app exited (see $logs/bench-app.log)"; exit 1; }
+
+phase() { # name
+    local start end
+    start=$(cpu_ticks)
+    sleep "$seconds"
+    kill -0 "$app" 2>/dev/null || { echo "FAIL $1: app exited (see $logs/bench-app.log)"; exit 1; }
+    end=$(cpu_ticks)
+    awk -v name="$1" -v d=$((end - start)) -v hz="$ticks" -v s="$seconds" -v pss="$(pss_mb)" \
+        'BEGIN { printf "%s: CPU %.2f %% of one core, PSS %s MB\n", name, 100 * d / hz / s, pss }'
+}
+
+phase visible
+
+# Minimise every window through a KWin script on the private bus.
+script=$(mktemp --suffix=.js)
+echo 'workspace.windowList().forEach(w => { if (w.normalWindow) w.minimized = true; });' >"$script"
+id=$(gdbus call --session -d org.kde.KWin -o /Scripting -m org.kde.kwin.Scripting.loadScript \
+    "$script" bench | grep -o '[0-9]\+')
+gdbus call --session -d org.kde.KWin -o "/Scripting/Script$id" -m org.kde.kwin.Script.run \
+    >>"$logs/bench-kwin.log" 2>&1
+rm -f "$script"
+sleep 4 # the last refresh in flight
+
+phase hidden
