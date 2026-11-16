@@ -20,6 +20,11 @@ Android emulators never appear.
 - Charts are custom-painted (a few bars), not a charting library.
 - NVIDIA data through NVML loaded at runtime with `libloading`, never by spawning `nvidia-smi`.
   No NVIDIA driver means no NVIDIA section, not an error.
+- **Win+Esc on KDE Plasma** opens SebWatch in place of System Monitor (Seb, #12): KGlobalAccel
+  launches `sebwatch.desktop`, and System Monitor's own Win+Esc is set to none, given back on
+  uninstall (`sebwatch --bind-win-esc`, `--unbind-win-esc`). One SebWatch at a time: it owns
+  the D-Bus name `io.github.S_Sebb.SebWatch`, and a second start raises the first one's window
+  through a KWin script (Wayland lets no app raise another's window) and exits.
 - No daemon, no root. Everything comes from files a normal user can read
   (`/sys/fs/cgroup`, `/proc`, `/sys/class/drm`).
 
@@ -112,6 +117,14 @@ minimised; CPU from `/proc/<pid>/stat`, PSS from `/proc/<pid>/smaps_rollup`.
   rows in sight, and processes are matched to the last sample by lookup, not by a scan of the
   group: now 3.0 % with 1000, 8.0 % with 4000 and 15 % with 8000, linear. What's left is the
   kernel's `stat` and `smaps_rollup` of each process, about 33 µs each.
+- **Start time** to the first frame, measured 2026-11-16 (#12) on the same laptop from exec
+  to Slint's first drawn frame: warm about **200 to 450 ms**; cold, with the app's files dropped
+  from the page cache, about 20 ms more; under memory pressure (`stress-ng --vm` taking all but
+  about 1 GB, PSI full about 20 %) **0.5 to 2.6 s**. Most of it is Slint opening the window and
+  loading the NVIDIA GL driver (250 ms warm, 1.4 to 2 s under pressure); reading takes 45 ms
+  warm and 100 to 300 ms under pressure, and icon lookups about 100 ms. Reading on a thread
+  while the window is built gained nothing measurable against that noise; not done. A second
+  start only raises the open window, in under 10 ms.
 - No fixed targets: best effort, without hurting stability.
 
 Visual changes are shown as a rendered mockup and approved before they are built.
