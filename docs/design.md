@@ -82,6 +82,7 @@ Visual changes are shown as a rendered mockup and approved before they are built
 
 ## Not planned
 
-- Recording history or a timeline (decided: live only).
+- Recording history or a timeline (decided: live only; the tiles keep only their last minute in
+  memory).
 - Replacing every feature of a full system monitor (sensors, network per connection, process
   editing). SebWatch explains usage; it is not a general task manager.
