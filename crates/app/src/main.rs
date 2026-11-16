@@ -3,6 +3,7 @@ mod clock;
 mod desktop;
 mod history;
 mod icons;
+mod kde;
 mod live;
 mod model;
 #[cfg(test)]
@@ -157,6 +158,21 @@ fn read_loop(
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    let shortcut = match std::env::args().nth(1).as_deref() {
+        Some("--bind-win-esc") => Some(kde::bind_win_esc()),
+        Some("--unbind-win-esc") => Some(kde::unbind_win_esc()),
+        _ => None,
+    };
+    if let Some(done) = shortcut {
+        if let Err(error) = done {
+            eprintln!("sebwatch: cannot change the Win+Esc shortcut: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if !kde::first_instance() {
+        return Ok(());
+    }
     let window = MainWindow::new()?;
     if let Some((width, height)) = settings::size() {
         window
