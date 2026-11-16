@@ -259,9 +259,11 @@ fn screenshots() {
         crate::present(&ui, crate::sample::unsplit());
         shot.save(&shot.render(), &dir.join(format!("unaccounted-{name}.png")));
 
-        // #36: the narrowest and the shortest window, the minimum size, and the minimum at 2x.
+        // #36: the narrowest and the shortest window, the minimum size, and the minimum at 2x;
+        // and a window maximised on a 1920×1080 screen, where the legends wrap least.
         crate::present(&ui, crate::sample::snapshot());
         for (size, width, height, scale_factor) in [
+            ("full", 1920, 1040, 1.0),
             ("narrow", 760, 844, 1.0),
             ("short", 1000, 480, 1.0),
             ("min", 760, 480, 1.0),

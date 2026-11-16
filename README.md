@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: RAM, swap and VRAM bars split by app, CPU, GPU, VRAM and disk tiles with their last minute as a graph, and the app table with the Android emulator expanded into its processes" />
+  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: CPU, GPU, VRAM and disk tiles with their last minute as a graph, RAM, swap and VRAM bars split by app beside them, and the app table with the Android emulator expanded into its processes" />
   <br /><sub>Breeze Light, with the Android emulator expanded into its processes</sub>
 </p>
 
@@ -65,7 +65,7 @@ the app menu under System. The chosen theme is kept in `~/.config/sebwatch/setti
 
 ## What you see
 
-Top to bottom:
+From the top:
 
 1. **RAM bar.** The five biggest apps in their own colours, then other apps, zswap pool, file
    cache (hatched: the kernel frees it on demand), kernel and drivers, and free. Hover a segment
@@ -73,8 +73,8 @@ Top to bottom:
 2. **Swap bar.** How much of each app sits in swap, naming the five biggest users of swap.
 3. **VRAM bar** (NVIDIA only). Each app's VRAM, naming the five biggest users, the driver's share, and free. While the GPU
    sleeps it says so, and SebWatch doesn't wake it.
-4. **Tiles** for CPU, GPU, VRAM and disk beside the bars, under the menu button that switches
-   theme.
+4. **Tiles** for CPU, GPU, VRAM and disk to the left of the bars, each with its last minute as a
+   small graph; two by two in a wide window. The menu button at the top right switches theme.
 5. **App table.** Name and icon, RAM in use, swapped out, file cache, CPU in cores, disk, GPU
    and VRAM, sorted by RAM; click a column's header to sort by it, again to reverse. An app
    keeps one colour in every bar and in the table. Press Ctrl+F to find an app by name, group or

@@ -25,7 +25,7 @@ Android emulators never appear.
 
 ## Main window
 
-Top to bottom:
+From the top:
 
 1. **RAM bar** that sums to total RAM: the top apps in fixed colors, then other apps, zswap
    pool, file cache (hatched: freed on demand), kernel and drivers, free. Hovering a segment
@@ -46,9 +46,13 @@ Top to bottom:
    into "N more apps") and a chip reads "Filtered: N of M apps · the bars show the whole system";
    the bars and tiles don't change. "Closed apps (cache)" stays only when the search finds it
    or one of the apps it lists.
-5. Small headline tiles for CPU, GPU, VRAM and disk beside the bars, under the menu button:
-   the value large, its unit below, and the last minute as a line with a light fill along the
-   tile's bottom, under the words (tile style T3, #52).
+5. Headline tiles for CPU, GPU, VRAM and disk to the left of the bars: the value large, its
+   unit below, and the last minute as a line with a light fill along the tile's bottom, under
+   the words (tile style T3, #52). All four are the same size, graph or not. From 1400 px wide
+   they sit two by two, so the top area is only as tall as the bars and the table gets the rest;
+   narrower windows stack them in one column (#58). The top area is as short as the taller of
+   the tiles and the bars allows, and the bars share any spare height in equal gaps. The menu
+   button sits at the top right.
 
 **Small windows** (#36). The window is at least 760 × 480 and remembers its size in the
 settings file (not when maximised or full screen). A narrow window keeps the name column at
