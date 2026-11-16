@@ -35,6 +35,8 @@ fn show(window: &MainWindow, shown: model::Shown) {
     window.set_vram(shown.vram.unwrap_or_default());
     window.set_tiles(ModelRc::from(Rc::new(VecModel::from(shown.tiles))));
     window.set_rows(ModelRc::from(Rc::new(VecModel::from(shown.rows))));
+    window.set_sort_column(shown.sort.column as i32);
+    window.set_sort_ascending(shown.sort.ascending);
 }
 
 /// Shows a new reading.
@@ -42,14 +44,31 @@ fn present(window: &MainWindow, snapshot: model::Snapshot) {
     VIEW.with_borrow_mut(|view| show(window, view.update(snapshot)));
 }
 
-/// Art, the first reading and expanding rows: everything but the desktop and the reader thread.
-/// `toggled` gets the expanded apps' keys whenever an app is expanded or folded.
-fn setup(window: &MainWindow, first: model::Snapshot, toggled: impl Fn(HashSet<String>) + 'static) {
+/// Art, the first reading, expanding rows and sorting: everything but the desktop and the reader
+/// thread. `toggled` gets the expanded apps' keys whenever an app is expanded or folded, `sorted`
+/// the new order after a click on a column's header.
+fn setup(
+    window: &MainWindow,
+    first: model::Snapshot,
+    sort: model::Sort,
+    toggled: impl Fn(HashSet<String>) + 'static,
+    sorted: impl Fn(model::Sort) + 'static,
+) {
     let art = window.global::<Art>();
     art.set_cloth(art::cloth());
     art.set_hatch(art::hatch());
     VIEW.set(model::View::default());
+    VIEW.with_borrow_mut(|view| view.sort = sort);
     present(window, first);
+    let weak = window.as_weak();
+    window.on_sort_clicked(move |column| {
+        let sort = VIEW.with_borrow_mut(|view| {
+            view.sort = view.sort.click(model::Column::ALL[column as usize]);
+            show(&weak.unwrap(), view.render());
+            view.sort
+        });
+        sorted(sort);
+    });
     let weak = window.as_weak();
     window.on_toggle(move |key| {
         let expanded = VIEW.with_borrow_mut(|view| {
@@ -127,9 +146,15 @@ fn main() -> Result<(), slint::PlatformError> {
             std::process::exit(1);
         });
     let (toggled, toggles) = mpsc::channel();
-    setup(&window, first, move |expanded| {
-        let _ = toggled.send(expanded);
-    });
+    setup(
+        &window,
+        first,
+        settings::sort(),
+        move |expanded| {
+            let _ = toggled.send(expanded);
+        },
+        settings::save_sort,
+    );
 
     let drawn = Arc::new(AtomicBool::new(false));
     let notified = window.window().set_rendering_notifier({

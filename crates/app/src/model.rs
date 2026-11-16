@@ -1,7 +1,7 @@
 //! What the window shows, in bytes and rates, and how it becomes the Slint view model.
 //! Filled from `live.rs` (sebwatch-core) in the app and from `sample.rs` in tests and screenshots.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use slint::{ModelRc, SharedString, VecModel};
@@ -9,8 +9,10 @@ use slint::{ModelRc, SharedString, VecModel};
 use crate::icons::Icons;
 use crate::{Bar, Row, RowKind, Segment, SegmentKind, Tile};
 
-/// Apps with their own colour in the bars.
-const COLOURED: usize = 5;
+/// Apps each bar names; the rest are its "Other apps".
+const NAMED: usize = 5;
+/// Series colours: the RAM bar's five apps and two for the swap and VRAM bars' own top apps.
+const SERIES: usize = 7;
 /// Segments at least this share of their bar show their size inside; smaller ones in the legend.
 /// About 58 px at the default window width, room for "16.6 GB".
 const LABELLED: f32 = 0.075;
@@ -76,11 +78,81 @@ pub struct Part {
     pub disk_per_s: Option<u64>,
 }
 
-/// Gives each of the top apps one of the five series colours and keeps it while the app stays in
-/// the top five, so a colour follows its app rather than its rank.
+/// A sortable table column, in the table's order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Column {
+    #[default]
+    Ram,
+    Swap,
+    Cache,
+    Cpu,
+    Disk,
+    Gpu,
+    Vram,
+}
+
+impl Column {
+    pub const ALL: [Column; 7] = [
+        Column::Ram,
+        Column::Swap,
+        Column::Cache,
+        Column::Cpu,
+        Column::Disk,
+        Column::Gpu,
+        Column::Vram,
+    ];
+
+    /// The app's figure in this column; a missing one sorts below zero.
+    fn value(self, app: &App) -> f64 {
+        match self {
+            Column::Ram => app.ram as f64,
+            Column::Swap => app.swap as f64,
+            Column::Cache => app.file_cache as f64,
+            Column::Cpu => app.cpu as f64,
+            Column::Disk => app.disk_per_s as f64,
+            Column::Gpu => app.gpu_percent.map_or(-1.0, |p| p as f64),
+            Column::Vram => app.vram.map_or(-1.0, |b| b as f64),
+        }
+    }
+}
+
+/// The table's order: largest first unless `ascending`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sort {
+    pub column: Column,
+    pub ascending: bool,
+}
+
+impl Sort {
+    /// After a click on a column's header: that column largest first, or the other way round
+    /// when it already sorts the table.
+    pub fn click(self, column: Column) -> Sort {
+        Sort {
+            column,
+            ascending: column == self.column && !self.ascending,
+        }
+    }
+
+    /// Ties keep the reading's order (by RAM), so rows don't swap places between refreshes.
+    fn apply(self, apps: &[App]) -> Vec<&App> {
+        let mut sorted: Vec<&App> = apps.iter().collect();
+        sorted.sort_by(|a, b| {
+            let order = self.column.value(a).total_cmp(&self.column.value(b));
+            if self.ascending {
+                order
+            } else {
+                order.reverse()
+            }
+        });
+        sorted
+    }
+}
+
+/// Gives each named app one of the series colours and keeps it while the app stays named in
+/// some bar, so a colour follows its app rather than its rank.
 #[derive(Default)]
 pub struct Colours {
-    slots: [Option<String>; COLOURED],
+    slots: [Option<String>; SERIES],
 }
 
 impl Colours {
@@ -103,7 +175,7 @@ impl Colours {
                             .slots
                             .iter()
                             .position(Option::is_none)
-                            .expect("a free slot per top app");
+                            .expect("a free slot per named app");
                         self.slots[i] = Some(name.to_string());
                         i
                     }
@@ -117,6 +189,7 @@ impl Colours {
 #[derive(Default)]
 pub struct View {
     last: Option<Snapshot>,
+    pub sort: Sort,
     colours: Colours,
     expanded: HashSet<String>,
     icons: Icons,
@@ -129,6 +202,7 @@ pub struct Shown {
     pub vram: Option<Bar>,
     pub tiles: Vec<Tile>,
     pub rows: Vec<Row>,
+    pub sort: Sort,
 }
 
 /// The key of the "N more apps" row.
@@ -161,30 +235,40 @@ impl View {
     }
 
     fn show(&mut self, s: &Snapshot) -> Shown {
-        let top: Vec<&str> = s
-            .apps
-            .iter()
-            .take(COLOURED)
-            .map(|a| a.key.as_str())
-            .collect();
-        let series = self.colours.assign(&top);
-        let rest = s.apps.get(COLOURED..).unwrap_or_default();
+        let ram = top(&s.apps, |a| a.ram);
+        let swap = top(&s.apps, |a| a.swap);
+        let vram = top(&s.apps, |a| a.vram.unwrap_or(0));
+        // RAM's five first, then the swap and VRAM bars' apps rank by rank, so each bar's
+        // biggest app always has a colour.
+        let mut named: Vec<&str> = ram.iter().map(|a| a.key.as_str()).collect();
+        for i in 0..NAMED {
+            for app in [swap.get(i), vram.get(i)].into_iter().flatten() {
+                if named.len() < SERIES && !named.contains(&app.key.as_str()) {
+                    named.push(&app.key);
+                }
+            }
+        }
+        let slots = self.colours.assign(&named);
+        let series: Series = named.into_iter().zip(slots).collect();
         Shown {
-            memory: memory_bar(s, &series, rest),
-            swap: swap_bar(s, &series, rest),
-            vram: vram_bar(s, &series, rest),
+            memory: memory_bar(s, &series, &ram),
+            swap: swap_bar(s, &series, &coloured(swap, &series)),
+            vram: vram_bar(s, &series, &coloured(vram, &series)),
             tiles: tiles(s),
             rows: self.rows(s, &series),
+            sort: self.sort,
         }
     }
 
-    fn rows(&mut self, s: &Snapshot, series: &[usize]) -> Vec<Row> {
+    fn rows(&mut self, s: &Snapshot, series: &Series) -> Vec<Row> {
         let mut rows = Vec::new();
-        let listed = s.apps.len().min(LISTED);
-        for (i, app) in s.apps[..listed].iter().enumerate() {
-            self.app_rows(&mut rows, app, series.get(i).map_or(-1, |&c| c as i32));
+        let sorted = self.sort.apply(&s.apps);
+        let colour = |app: &App| series.get(app.key.as_str()).map_or(-1, |&c| c as i32);
+        let listed = sorted.len().min(LISTED);
+        for app in &sorted[..listed] {
+            self.app_rows(&mut rows, app, colour(app));
         }
-        let more = &s.apps[listed..];
+        let more = &sorted[listed..];
         if !more.is_empty() {
             let expanded = self.expanded.contains(MORE);
             rows.push(Row {
@@ -197,7 +281,7 @@ impl View {
             });
             if expanded {
                 for app in more {
-                    self.app_rows(&mut rows, app, -1);
+                    self.app_rows(&mut rows, app, colour(app));
                 }
             }
         }
@@ -258,6 +342,46 @@ impl View {
 }
 
 const NONE: &str = "—";
+
+/// Each named app's colour slot, by key.
+type Series<'a> = HashMap<&'a str, usize>;
+
+/// A bar's five biggest apps by `measure`, leaving out those with none; ties keep RAM's order.
+fn top(apps: &[App], measure: impl Fn(&App) -> u64) -> Vec<&App> {
+    let mut sorted: Vec<&App> = apps.iter().filter(|a| measure(a) > 0).collect();
+    sorted.sort_by_key(|a| std::cmp::Reverse(measure(a)));
+    sorted.truncate(NAMED);
+    sorted
+}
+
+/// A bar names its apps down to the first without a colour.
+fn coloured<'a>(apps: Vec<&'a App>, series: &Series) -> Vec<&'a App> {
+    apps.into_iter()
+        .take_while(|a| series.contains_key(a.key.as_str()))
+        .collect()
+}
+
+/// The "Other apps" segment: the apps a bar doesn't name, with some of `measure`.
+fn others(
+    apps: &[App],
+    named: &[&App],
+    measure: impl Fn(&App) -> u64,
+    total: u64,
+) -> Option<Segment> {
+    let rest: Vec<&App> = apps
+        .iter()
+        .filter(|a| measure(a) > 0 && !named.iter().any(|n| n.key == a.key))
+        .collect();
+    (!rest.is_empty()).then(|| {
+        segment(
+            SegmentKind::Other,
+            "Other apps",
+            rest.iter().map(|a| measure(a)).sum(),
+            total,
+            &[format!("{} apps", rest.len())],
+        )
+    })
+}
 
 fn empty_row() -> Row {
     let none = SharedString::from(NONE);
@@ -358,13 +482,11 @@ fn stack(segments: &mut [Segment]) {
     }
 }
 
-fn memory_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Bar {
+fn memory_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
     let total = s.ram_total;
-    let mut segments: Vec<Segment> = s
-        .apps
+    let mut segments: Vec<Segment> = named
         .iter()
-        .zip(series)
-        .map(|(app, &c)| {
+        .map(|app| {
             let mut notes = Vec::new();
             if let Some(zswap) = app.zswap.filter(|&z| z > 0) {
                 notes.push(format!("includes {} compressed in zswap", bytes(zswap)));
@@ -372,18 +494,18 @@ fn memory_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Bar {
             if app.swap > 0 {
                 notes.push(format!("{} more is swapped out", bytes(app.swap)));
             }
-            app_segment(app, c, app.ram, total, "in RAM", notes)
+            app_segment(
+                app,
+                series[app.key.as_str()],
+                app.ram,
+                total,
+                "in RAM",
+                notes,
+            )
         })
         .collect();
-    let other: u64 = rest.iter().map(|a| a.ram).sum();
+    segments.extend(others(&s.apps, named, |a| a.ram, total));
     segments.extend([
-        segment(
-            SegmentKind::Other,
-            "Other apps",
-            other,
-            total,
-            &[format!("{} apps", rest.len())],
-        ),
         segment(
             SegmentKind::Zswap,
             "Zswap pool",
@@ -415,23 +537,17 @@ fn memory_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Bar {
     }
 }
 
-fn swap_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Bar {
+fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
     let total = s.swap_total;
-    let mut segments: Vec<Segment> = s
-        .apps
+    let mut segments: Vec<Segment> = named
         .iter()
-        .zip(series)
-        .map(|(app, &c)| app_segment(app, c, app.swap, total, "in swap", Vec::new()))
+        .map(|app| {
+            let c = series[app.key.as_str()];
+            app_segment(app, c, app.swap, total, "in swap", Vec::new())
+        })
         .collect();
-    let other: u64 = rest.iter().map(|a| a.swap).sum();
     let used: u64 = s.apps.iter().map(|a| a.swap).sum();
-    segments.push(segment(
-        SegmentKind::Other,
-        "Other apps",
-        other,
-        total,
-        &[format!("{} apps", rest.len())],
-    ));
+    segments.extend(others(&s.apps, named, |a| a.swap, total));
     segments.push(segment(
         SegmentKind::Free,
         "Free swap",
@@ -449,7 +565,7 @@ fn swap_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Bar {
 
 /// VRAM by app from NVML's per-process figures, the rest of the used VRAM as "Driver and other".
 /// Empty while the GPU sleeps.
-fn vram_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Option<Bar> {
+fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
     let bar = |total: String, segments: Vec<Segment>| Bar {
         title: "VRAM".into(),
         total: total.into(),
@@ -459,31 +575,25 @@ fn vram_bar(s: &Snapshot, series: &[usize], rest: &[App]) -> Option<Bar> {
         return s.gpu_asleep.then(|| bar("GPU asleep".into(), Vec::new()));
     };
     let vram = |app: &App| app.vram.unwrap_or(0);
-    // Apps without VRAM are left out, so the legend lists only the GPU's users.
-    let mut segments: Vec<Segment> = s
-        .apps
+    let mut segments: Vec<Segment> = named
         .iter()
-        .zip(series)
-        .filter(|(app, _)| vram(app) > 0)
-        .map(|(app, &c)| {
+        .map(|app| {
             let notes: Vec<String> = app
                 .gpu_percent
                 .map(|p| format!("{} of the GPU's time", percent(p)))
                 .into_iter()
                 .collect();
-            app_segment(app, c, vram(app), total, "in VRAM", notes)
+            app_segment(
+                app,
+                series[app.key.as_str()],
+                vram(app),
+                total,
+                "in VRAM",
+                notes,
+            )
         })
         .collect();
-    let others: Vec<&App> = rest.iter().filter(|a| vram(a) > 0).collect();
-    if !others.is_empty() {
-        segments.push(segment(
-            SegmentKind::Other,
-            "Other apps",
-            others.iter().map(|a| vram(a)).sum(),
-            total,
-            &[format!("{} apps", others.len())],
-        ));
-    }
+    segments.extend(others(&s.apps, named, vram, total));
     let apps: u64 = s.apps.iter().map(vram).sum();
     let unattributed = used.saturating_sub(apps);
     if unattributed > 0 {
@@ -655,13 +765,7 @@ mod tests {
         let names: Vec<&str> = vram.iter().map(|seg| seg.name.as_str()).collect();
         assert_eq!(
             names,
-            [
-                "Zen Browser",
-                "T3 Code",
-                "Other apps",
-                "Driver and other",
-                "Free"
-            ]
+            ["Zen Browser", "T3 Code", "KWin", "Driver and other", "Free"]
         );
         let colour =
             |segs: &[Segment], name: &str| segs.iter().find(|seg| seg.name == name).unwrap().series;
@@ -693,6 +797,127 @@ mod tests {
             ..crate::sample::snapshot()
         };
         assert!(View::default().update(none).vram.is_none());
+    }
+
+    fn names(bar: &Bar) -> Vec<String> {
+        slint::Model::iter(&bar.segments)
+            .map(|seg| seg.name.to_string())
+            .collect()
+    }
+
+    /// Every app row, with the "N more apps" fold open.
+    fn app_rows(view: &mut View) -> Vec<Row> {
+        view.toggle(MORE);
+        let rows = view.render().rows;
+        view.toggle(MORE);
+        rows.into_iter()
+            .filter(|r| r.kind == RowKind::App)
+            .collect()
+    }
+
+    #[test]
+    fn table_sorts_by_each_column_both_ways_ties_in_ram_order() {
+        let s = crate::sample::snapshot();
+        let by_name = |name: &str| s.apps.iter().position(|a| a.name == name).unwrap();
+        let mut view = View::default();
+        view.update(crate::sample::snapshot());
+        for column in Column::ALL {
+            for ascending in [false, true] {
+                view.sort = Sort { column, ascending };
+                let rows = app_rows(&mut view);
+                assert_eq!(rows.len(), s.apps.len());
+                for pair in rows.windows(2) {
+                    let (a, b) = (by_name(&pair[0].name), by_name(&pair[1].name));
+                    let (va, vb) = (column.value(&s.apps[a]), column.value(&s.apps[b]));
+                    let ordered = if ascending { va <= vb } else { va >= vb };
+                    assert!(ordered, "{column:?} {ascending}: {va} then {vb}");
+                    if va == vb {
+                        assert!(a < b, "{column:?} tie out of RAM order");
+                    }
+                }
+            }
+        }
+        // The fold holds whatever the order puts last.
+        view.sort = Sort {
+            column: Column::Swap,
+            ascending: false,
+        };
+        let rows = view.render().rows;
+        assert_eq!(rows[0].name, "Android emulator");
+        assert_eq!(rows[LISTED].kind, RowKind::More);
+    }
+
+    #[test]
+    fn a_click_sorts_largest_first_and_again_reverses() {
+        let ram = Sort::default();
+        assert!(!ram.ascending);
+        let swap = ram.click(Column::Swap);
+        assert_eq!((swap.column, swap.ascending), (Column::Swap, false));
+        assert!(swap.click(Column::Swap).ascending);
+        assert!(!swap.click(Column::Swap).click(Column::Swap).ascending);
+        assert!(!swap.click(Column::Swap).click(Column::Cpu).ascending);
+    }
+
+    #[test]
+    fn swap_and_vram_bars_name_their_own_top_five_in_one_colour_per_app() {
+        let mut view = View::default();
+        let shown = view.update(crate::sample::snapshot());
+        assert_eq!(
+            names(&shown.swap)[..6],
+            [
+                "Android emulator",
+                "Claude agents",
+                "Steam",
+                "Zen Browser",
+                "WeChat",
+                "Other apps"
+            ]
+        );
+        // Each app's colour is the same in every bar and in its table row.
+        let mut colours: HashMap<String, i32> = HashMap::new();
+        for bar in [&shown.memory, &shown.swap, shown.vram.as_ref().unwrap()] {
+            for seg in slint::Model::iter(&bar.segments).filter(|s| s.kind == SegmentKind::App) {
+                let c = *colours.entry(seg.name.to_string()).or_insert(seg.series);
+                assert_eq!(c, seg.series, "{} changes colour", seg.name);
+            }
+        }
+        assert_eq!(colours.len(), SERIES);
+        let mut seen: Vec<i32> = colours.values().copied().collect();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), SERIES, "two apps share a colour");
+        for row in app_rows(&mut view) {
+            let expected = colours.get(row.name.as_str()).copied().unwrap_or(-1);
+            assert_eq!(row.series, expected, "{}'s row", row.name);
+        }
+
+        // WeChat climbs to the top of the swap bar: it keeps its colour.
+        let mut s = crate::sample::snapshot();
+        s.apps.iter_mut().find(|a| a.name == "WeChat").unwrap().swap = 6 << 30;
+        let shown = view.update(s);
+        let wechat = slint::Model::row_data(&shown.swap.segments, 0).unwrap();
+        assert_eq!(wechat.name, "WeChat");
+        assert_eq!(wechat.series, colours["WeChat"]);
+    }
+
+    #[test]
+    fn each_bar_keeps_a_colour_for_its_biggest_app() {
+        // Swap and VRAM held by ten other apps than RAM's top five: two colours are left.
+        let mut s = crate::sample::snapshot();
+        for (i, app) in s.apps.iter_mut().enumerate() {
+            let (swap, vram) = match i {
+                0..5 => (0, None),
+                5..10 => ((20 - i as u64) << 20, None),
+                _ => (0, Some((40 - i as u64) << 20)),
+            };
+            (app.swap, app.vram) = (swap, vram);
+        }
+        let shown = View::default().update(s);
+        let swap = names(&shown.swap);
+        let vram = names(&shown.vram.unwrap());
+        assert_eq!(swap[1..], ["Other apps", "Free swap"]);
+        assert_eq!(vram[1], "Other apps");
+        assert_ne!(swap[0], vram[0]);
     }
 
     #[test]

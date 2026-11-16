@@ -6,7 +6,7 @@ export { Theme, ThemeChoice, Art, SegmentKind }
 // One part of the RAM or swap bar.
 export struct Segment {
     kind: SegmentKind,
-    // The app's series colour, 0 to 4; only for kind app.
+    // The app's series colour, 0 to 6; only for kind app.
     series: int,
     name: string,
     // Shown after the name in the tooltip, e.g. "· guide35".
@@ -506,7 +506,12 @@ component RowView inherits Rectangle {
 component Table {
     in property <[Row]> rows;
     in-out property <string> selected;
+    // The sorted column (0 for RAM in use) and its direction.
+    in property <int> sort-column;
+    in property <bool> sort-ascending;
     callback toggle(string);
+    callback sort(int);
+    property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", "GPU", "VRAM"];
 
     VerticalLayout {
         if Theme.picnic: HorizontalLayout {
@@ -517,7 +522,7 @@ component Table {
                 text: "Apps";
             }
             Muted {
-                text: "sorted by RAM in use";
+                text: "sorted by " + root.sort-names[root.sort-column];
                 font-size: Theme.small;
                 font-weight: 800;
                 horizontal-alignment: right;
@@ -569,15 +574,22 @@ component Table {
                             font-weight: Theme.picnic ? 800 : 400;
                             color: Theme.picnic ? Theme.muted : Theme.fg;
                         }
-                        // Sorted by RAM in use.
-                        if i == 0: VerticalLayout {
+                        // Down: largest first.
+                        if i == root.sort-column: VerticalLayout {
                             alignment: center;
                             Chevron {
                                 width: 10px;
                                 height: 10px;
                                 open: true;
+                                up: root.sort-ascending;
                                 color: Theme.picnic ? Theme.muted : Theme.fg;
                             }
+                        }
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.sort(i);
                         }
                     }
                 }
@@ -608,7 +620,11 @@ export component MainWindow inherits Window {
     in property <[Tile]> tiles;
     in property <[Row]> rows;
     in-out property <string> selected;
+    in property <int> sort-column;
+    in property <bool> sort-ascending;
     callback toggle(string);
+    // A click on a column's header, 0 for RAM in use.
+    callback sort-clicked(int);
     callback theme-chosen(ThemeChoice);
 
     in property <string> version;
@@ -694,8 +710,13 @@ export component MainWindow inherits Window {
                     Table {
                         rows: root.rows;
                         selected <=> root.selected;
+                        sort-column: root.sort-column;
+                        sort-ascending: root.sort-ascending;
                         toggle(key) => {
                             root.toggle(key);
+                        }
+                        sort(column) => {
+                            root.sort-clicked(column);
                         }
                     }
                 }

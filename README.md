@@ -70,13 +70,14 @@ Top to bottom:
 1. **RAM bar.** The five biggest apps in their own colours, then other apps, zswap pool, file
    cache (hatched: the kernel frees it on demand), kernel and drivers, and free. Hover a segment
    to name it.
-2. **Swap bar.** How much of each app sits in swap.
-3. **VRAM bar** (NVIDIA only). Each app's VRAM, the driver's share, and free. While the GPU
+2. **Swap bar.** How much of each app sits in swap, naming the five biggest users of swap.
+3. **VRAM bar** (NVIDIA only). Each app's VRAM, naming the five biggest users, the driver's share, and free. While the GPU
    sleeps it says so, and SebWatch doesn't wake it.
 4. **Tiles** for CPU, GPU, VRAM and disk beside the bars, under the menu button that switches
    theme.
 5. **App table.** Name and icon, RAM in use, swapped out, file cache, CPU in cores, disk, GPU
-   and VRAM, sorted by RAM. Expand an app to see its processes, and an app made of several
+   and VRAM, sorted by RAM; click a column's header to sort by it, again to reverse. An app
+   keeps one colour in every bar and in the table. Expand an app to see its processes, and an app made of several
    groups (17 Claude agents, say) group by group.
 
 [docs/accounting.md](docs/accounting.md) says where every number comes from.

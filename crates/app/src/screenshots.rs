@@ -1,6 +1,7 @@
 //! The window drawn offscreen by Slint's software renderer, in each theme, with the Android
-//! emulator's bar segment hovered and its row expanded, then with the NVIDIA GPU asleep, plus
-//! Breeze Light with the menu open, and one of this PC's live reading.
+//! emulator's bar segment hovered and its row expanded, then with the NVIDIA GPU asleep, then
+//! sorted by swap both ways, plus Breeze Light with the menu open, and one of this PC's live
+//! reading.
 //! Nothing shows on the screen. Run with `scripts/screenshots <dir>`.
 
 use std::cell::Cell;
@@ -114,7 +115,13 @@ fn screenshots() {
     ] {
         let ui = MainWindow::new().unwrap();
         ui.global::<Theme>().set_choice(choice);
-        crate::setup(&ui, crate::sample::snapshot(), |_| {});
+        crate::setup(
+            &ui,
+            crate::sample::snapshot(),
+            Default::default(),
+            |_| {},
+            |_| {},
+        );
         ui.show().unwrap();
         let shot = Shot {
             window: window.clone(),
@@ -137,8 +144,20 @@ fn screenshots() {
         crate::present(&ui, crate::sample::asleep());
         shot.save(&shot.render(), &dir.join(format!("app-{name}-asleep.png")));
 
+        // Sorted by swap, largest first, then smallest first.
+        crate::present(&ui, crate::sample::snapshot());
+        ui.invoke_toggle("Android emulator".into());
+        ui.set_selected("".into());
+        ui.invoke_sort_clicked(1);
+        shot.save(&shot.render(), &dir.join(format!("sort-swap-{name}.png")));
+        ui.invoke_sort_clicked(1);
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("sort-swap-up-{name}.png")),
+        );
+        ui.invoke_sort_clicked(0);
+
         if choice == ThemeChoice::Light {
-            crate::present(&ui, crate::sample::snapshot());
             shot.pointer(1000.0 - 16.0 - 15.0, 14.0 + 15.0, true);
             shot.save(&shot.render(), &dir.join("app-light-menu.png"));
         }
@@ -154,6 +173,8 @@ fn screenshots() {
     crate::setup(
         &ui,
         reader.read(interval, &Default::default()).unwrap(),
+        Default::default(),
+        |_| {},
         |_| {},
     );
     let biggest = ui.get_rows().row_data(0).unwrap().key;
