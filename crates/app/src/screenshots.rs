@@ -93,6 +93,24 @@ impl Shot {
     }
 }
 
+fn same(p: Rgb8Pixel, colour: slint::Color) -> bool {
+    (p.r, p.g, p.b) == (colour.red(), colour.green(), colour.blue())
+}
+
+/// The middle of the first run of this colour on pixel row `y`.
+fn find_in_row(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color, y: f32) -> f32 {
+    let line = &pixels[(y as u32 * width) as usize..][..width as usize];
+    let start = line
+        .iter()
+        .position(|&p| same(p, colour))
+        .expect("the colour is on the row");
+    let run = line[start..]
+        .iter()
+        .take_while(|&&p| same(p, colour))
+        .count();
+    start as f32 + run as f32 / 2.0
+}
+
 /// The middle of the first run of this colour on the topmost row that has it.
 fn find(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color) -> (f32, f32) {
     let i = pixels
@@ -154,6 +172,37 @@ fn screenshots() {
         shot.pointer(x, y, false);
         shot.wait(Duration::from_millis(800));
         shot.save(&shot.render(), &dir.join(format!("app-{name}.png")));
+
+        // The RAM bar's leftover, then the expanded app's leftover row: five rows below the
+        // app's row, found by its swatch (the lowest pixel of its colour near the left edge).
+        let kernel = ui.global::<Theme>().get_kernel();
+        shot.pointer(4.0, 4.0, false);
+        shot.pointer(find_in_row(&first, shot.width, kernel, y), y, false);
+        shot.wait(Duration::from_millis(800));
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("leftover-bar-{name}.png")),
+        );
+        let swatch = (0..first.len())
+            .rev()
+            .find(|&i| i as u32 % shot.width < 60 && same(first[i], android))
+            .expect("the app's swatch");
+        let row = if choice == ThemeChoice::Sebchat {
+            31.0
+        } else {
+            28.0
+        };
+        shot.pointer(4.0, 4.0, false);
+        shot.pointer(
+            300.0,
+            (swatch as u32 / shot.width) as f32 + 5.0 * row,
+            false,
+        );
+        shot.wait(Duration::from_millis(800));
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("leftover-row-{name}.png")),
+        );
 
         shot.pointer(4.0, 4.0, false);
         crate::present(&ui, crate::sample::asleep());

@@ -35,10 +35,10 @@ fn main() -> std::io::Result<()> {
                 );
             }
         }
-        let rows: u64 = d.groups.iter().map(|g| g.ram).sum::<u64>() + d.kernel_and_zswap;
+        let rows: u64 = d.groups.iter().map(|g| g.ram).sum::<u64>() + d.not_attributed;
         println!(
-            "  kernel memory and zswap: {:.1} MiB; rows sum: {}",
-            mib(d.kernel_and_zswap),
+            "  not attributed to processes: {:.1} MiB; rows sum: {}",
+            mib(d.not_attributed),
             if rows == app.ram { "match" } else { "MISMATCH" }
         );
     }

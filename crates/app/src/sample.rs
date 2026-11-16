@@ -1,7 +1,7 @@
 //! A fixed reading with the approved mockup's numbers (this PC, 2026-11-15), shown until the
 //! window reads `sebwatch-core`.
 
-use crate::model::{App, Part, Snapshot};
+use crate::model::{App, Part, Snapshot, Unreadable};
 
 const K: f64 = 1024.0;
 const M: f64 = K * K;
@@ -40,6 +40,8 @@ fn app(
         parts: Vec::new(),
         unattributed_ram: 0,
         unattributed_swap: 0,
+        over_charge: 0,
+        unreadable: Vec::new(),
     }
 }
 
@@ -87,11 +89,23 @@ pub fn snapshot() -> Snapshot {
                     0.0,
                     0,
                 ),
+                // Runs as another user: its memory can't be read.
+                Part {
+                    ram: None,
+                    swap: None,
+                    disk_per_s: None,
+                    ..part("adb", 4130302, 0, 0, 0.0, 0)
+                },
             ],
             unattributed_ram: b(1.2, G),
             unattributed_swap: b(296.0, M),
             groups: vec!["emulator-guide35.service".into()],
-            pids: vec![4130176, 4130195, 4130291],
+            pids: vec![4130176, 4130195, 4130291, 4130302],
+            unreadable: vec![Unreadable {
+                name: "adb".into(),
+                pid: 4130302,
+                denied: true,
+            }],
             ..app(
                 "Android emulator",
                 "· guide35",

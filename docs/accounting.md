@@ -68,23 +68,26 @@ split rather than counted twice.
 | CPU | `utime + stime` from `/proc/<pid>/stat`, two reads one refresh apart, in cores |
 
 - An app of several groups shows each group with its sums over its processes.
-- **Kernel memory and zswap (not per process)**: the app's RAM in use minus its processes'
-  RAM, so the rows sum to the app's total. It holds the group's `kernel` and `zswap`, which no
-  process owns (on a live system the processes' PSS matched each group's `anon` within 1%).
-  Floored at 0: PSS splits pages shared with other apps, which the cgroup charges to one.
+- **Not attributed to processes**: the app's RAM in use minus its processes' RAM, so the rows
+  sum to the app's total. It holds the group's `kernel` and `zswap`, which no process owns (on
+  a live system the processes' PSS matched each group's `anon` within 1%), and the memory of
+  processes whose `smaps_rollup` can't be read (`ProcessRow::unreadable` holds why:
+  `PermissionDenied` for another user's process, such as a root helper). Floored at 0: PSS
+  splits pages shared with other apps, which the cgroup charges to one, so the processes can
+  add up to more than the app; `DrillDown::over_charge` holds by how much.
 - A process that exits between reads is dropped; a new process, or a PID reused by a new
-  process (different start time), shows zero CPU for one refresh. Another user's process
-  whose `smaps_rollup` can't be read shows CPU but no memory.
+  process (different start time), shows zero CPU for one refresh. A process whose
+  `smaps_rollup` can't be read shows CPU but no memory.
 
 ## System rows (`/proc/meminfo`, kB)
 
-Apps plus Free, Zswap pool and Kernel and drivers sum exactly to `MemTotal`; swap is outside RAM.
+Apps plus Free, Zswap pool and Kernel, drivers and unattributed sum exactly to `MemTotal`; swap is outside RAM.
 
 | Row | Value |
 |---|---|
 | Free | `MemFree` |
 | Zswap pool | `Zswap` minus every app's `zswap`: only the part of the compressed pool no app accounts for (each app's share is already in its RAM in use; `Zswapped` is how much the pool holds) |
-| Kernel and drivers | `MemTotal - MemFree - Zswap pool - sum(apps' RAM in use + file cache)` (Closed apps (cache) included): memory no cgroup is charged for (boot allocations, root page cache, GPU driver memory) |
+| Kernel, drivers and unattributed | `MemTotal - MemFree - Zswap pool - sum(apps' RAM in use + file cache)` (Closed apps (cache) included): memory no cgroup is charged for (boot allocations, root page cache, GPU driver memory), and whatever the per-cgroup counters miss |
 | Available | `MemAvailable` |
 | Pressure | `/proc/pressure/memory`, `some avg10` |
 
@@ -127,11 +130,11 @@ the cgroup root, the same key the memory numbers use.
 ## In the window (`crates/app/src/model.rs`, `live.rs`)
 
 - **RAM bar**: the five biggest apps in their own colours, then Other apps (the rest's RAM in
-  use), Zswap pool, File cache (every app's file cache), Kernel and drivers and Free; the
+  use), Zswap pool, File cache (every app's file cache), Kernel, drivers and unattributed and Free; the
   shares add up to `MemTotal`.
 - **Closed apps (cache)** is a row like any app, sorted with them: its RAM counts in Other apps
   unless it is in the top five, its cache in File cache. It has no processes, so expanded it
-  shows only "Kernel memory and zswap (not per process)".
+  shows only "Not attributed to processes".
 - **Swap bar**: the five biggest apps by swap, Other apps, and free swap (`SwapTotal` minus every
   app's swap).
 - **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the five biggest apps by VRAM (each app's
@@ -154,6 +157,8 @@ the cgroup root, the same key the memory numbers use.
   them, any case), or a whole PID from its groups' `cgroup.procs`, read every refresh for every
   app (the first group's was already read to name the app).
 - An expanded app reads its processes (`processes.rs`) only while expanded; its rows plus
-  "Kernel memory and zswap (not per process)" sum to its RAM in use. That row's swap is the
-  app's swap minus its processes' swap. An app of several groups lists each group, then its
+  "Not attributed to processes" sum to its RAM in use. That row's swap is the app's swap minus
+  its processes' swap. It adds " · N unreadable" when N processes couldn't be read, and
+  " · processes show X more" when their RAM exceeds the app's (its RAM is 0 then); hovering it
+  explains what it holds and names the unreadable processes and why. An app of several groups lists each group, then its
   processes; disk is known per group, so a process shows none.
