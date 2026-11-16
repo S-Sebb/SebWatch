@@ -1,46 +1,110 @@
-# SebWatch
+<p align="center">
+  <img src="art/icons/hicolor/128x128/apps/sebwatch.png" width="96" height="96" alt="SebWatch's icon" />
+</p>
 
-A resource monitor for Linux that answers one question exactly: **where did my RAM (and CPU,
-GPU, disk) go?**
+<h1 align="center">SebWatch</h1>
 
-Most monitors list processes and their private memory. Those numbers leave out shared memory,
-swap, the compressed swap pool, file cache and the kernel, and they hide anything without a
-window (an Android emulator started as a background service, a build an agent spawned). Their
-totals often explain less than half of what the system reports as used.
+<p align="center">
+  Where did my RAM go? A Linux resource monitor whose numbers <strong>add up</strong>:<br />
+  RAM, swap and VRAM per app, background services and emulators included.
+</p>
 
-SebWatch reads the kernel's per-app accounting instead (cgroup v2: every app a desktop starts
-runs in its own systemd scope or service), so its breakdown adds up to the RAM you have:
+<p align="center">
+  <a href="#get-it">Get it</a> · <a href="#what-you-see">What you see</a> ·
+  <a href="#build-from-source">Build from source</a> · <a href="#licence">Licence</a>
+</p>
 
+<p align="center">
+  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: RAM, swap and VRAM bars split by app, CPU, GPU, VRAM and disk tiles, and the app table with the Android emulator expanded into its processes" />
+  <br /><sub>Breeze Light, with the Android emulator expanded into its processes</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/readme/breeze-dark.png" alt="SebWatch in Breeze Dark" /><br />
+      <sub>Breeze Dark</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/readme/sebchat.png" alt="SebWatch in the SebChat theme: peach checks and pixel lettering" /><br />
+      <sub>SebChat</sub>
+    </td>
+  </tr>
+</table>
+
+## What it does
+
+- **Every MB accounted for.** The RAM bar adds up to your total RAM: each app, the zswap pool,
+  file cache, kernel and drivers, and free. No unexplained gap between "used" and the apps.
+- **Every app, window or not.** It reads the kernel's own per-app accounting (cgroup v2), so an
+  emulator started as a background service, or a build an agent spawned, counts toward the app
+  that started it.
+- **Live.** It refreshes every 2 seconds while you look at it and does nothing while minimised.
+  No history is recorded.
+- **No daemon, no root.** Everything comes from files a normal user can read.
+- **At home on KDE Plasma.** Breeze Light and Breeze Dark follow the desktop's light or dark, or
+  pick the SebChat theme from the menu.
+
+## Get it
+
+| Needs | Why |
+|---|---|
+| **Linux** with cgroup v2 and a systemd user session | Each app the desktop starts runs in its own group, which is what SebWatch reads |
+| **NVIDIA driver** (optional) | For GPU and VRAM readings; without it the VRAM bar and the GPU and VRAM tiles are hidden, and the table shows — in their columns |
+| **Rust** (stable) and the fontconfig and xkbcommon development packages | To build it: `fontconfig-devel libxkbcommon-devel` on Fedora |
+
+There are no packages yet. From a checkout:
+
+```sh
+scripts/install      # builds a release and installs it into ~/.local
+scripts/uninstall    # removes exactly what install put there
 ```
-16 GB  ███████████ apps ███████████▏zswap▏cache ▏kernel▏free
-       Claude agents 3.8  emulator 2.9  Zen 1.0  …
+
+Both take another prefix as an argument (`scripts/install /usr/local`). SebWatch then appears in
+the app menu under System. The chosen theme is kept in `~/.config/sebwatch/settings`.
+
+## What you see
+
+Top to bottom:
+
+1. **RAM bar.** The five biggest apps in their own colours, then other apps, zswap pool, file
+   cache (hatched: the kernel frees it on demand), kernel and drivers, and free. Hover a segment
+   to name it.
+2. **Swap bar.** How much of each app sits in swap.
+3. **VRAM bar** (NVIDIA only). Each app's VRAM, the driver's share, and free. While the GPU
+   sleeps it says so, and SebWatch doesn't wake it.
+4. **Tiles** for CPU, GPU, VRAM and disk beside the bars, under the menu button that switches
+   theme.
+5. **App table.** Name and icon, RAM in use, swapped out, file cache, CPU in cores, disk, GPU
+   and VRAM, sorted by RAM. Expand an app to see its processes, and an app made of several
+   groups (17 Claude agents, say) group by group.
+
+[docs/accounting.md](docs/accounting.md) says where every number comes from.
+
+## Footprint
+
+With the window open, SebWatch uses about 2 % of one CPU core and about 130 MB of memory, half of
+it the graphics driver every GPU-drawn window loads. Minimised or hidden, it reads nothing and uses
+no CPU. `scripts/bench` measures it; [docs/design.md](docs/design.md#footprint) has the details.
+
+## Build from source
+
+```sh
+cargo run -p sebwatch     # start it from the checkout
+scripts/check             # cargo fmt, clippy and the tests, one line per step
+scripts/screenshots out/  # draw the window in each theme offscreen, with sample data
 ```
 
-Status: early development. The backlog is in the [issues](https://github.com/S-Sebb/SebWatch/issues);
-the direction is in [docs/design.md](docs/design.md), the accounting method in
-[docs/accounting.md](docs/accounting.md).
+`crates/core` reads and accounts (cgroups, `/proc`, NVML) with no UI and is tested headless;
+`crates/app` is the [Slint](https://slint.dev) window. The direction is in
+[docs/design.md](docs/design.md), settled choices in [docs/decisions.md](docs/decisions.md) and
+the backlog in the [issues](https://github.com/S-Sebb/SebWatch/issues).
 
-## Goals
+## Licence
 
-- **Every MB accounted for.** The RAM bar sums to total RAM: apps, zswap pool, file cache,
-  kernel and drivers, free. Nothing is left as an unexplained gap.
-- **Every app, window or not.** Background services, emulators, agents and their child
-  processes count toward the app that started them.
-- **Live.** It shows the present, refreshed every couple of seconds. No history is recorded.
-- **Light.** A native Rust app: small memory footprint, near-zero CPU, no work while hidden.
-- **Looks native.** On KDE Plasma it should be indistinguishable from the long-established
-  apps beside it (System Settings, Dolphin, Kate): Breeze Light and Breeze Dark themes that follow
-  the system's light/dark, plus one close to SebChat's.
+SebWatch is under the [MIT licence](LICENSE), Copyright (c) 2026 S-Sebb. Its window is built with
+[Slint](https://slint.dev), under Slint's royalty-free licence:
 
-## Build
+<a href="https://slint.dev"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-light.svg" height="48" alt="Made with Slint" /></a>
 
-Needs a stable Rust toolchain; on Linux also the fontconfig and xkbcommon development
-packages (`fontconfig-devel libxkbcommon-devel` on Fedora). `scripts/check` runs `cargo fmt`,
-`clippy` and the tests, one line per step; `cargo run -p sebwatch` starts the app.
-
-`crates/core` is the UI-free library (accounting, readers) whose tests run headless;
-`crates/app` is the Slint window.
-
-## License
-
-MIT
+Screenshots are drawn offscreen from sample data, not from a real PC.
