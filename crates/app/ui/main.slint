@@ -258,7 +258,8 @@ component TileView inherits Card {
             HorizontalLayout {
                 spacing: 5px;
                 alignment: start;
-                Label {
+                // No value while the GPU sleeps: the unit says so.
+                if root.tile.value != "": Label {
                     text: root.tile.value;
                     font-family: Theme.picnic ? "Jersey 10" : "";
                     font-weight: Theme.picnic ? 400 : 400;
