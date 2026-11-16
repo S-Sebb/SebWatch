@@ -26,7 +26,13 @@ parent's group, so a build an agent starts is charged to that agent.
   `qemu-system*` is "Android emulator · <instance>" (its Description is a long shell command);
   else the matching `.desktop` file's `Name`/`Icon` (desktop id or Flatpak id, searched in the
   XDG data dirs and Flatpak exports), else the unit file's `Description=` (read from disk, also
-  from the `foo@.service` template), else the cleaned name. Without a desktop file the icon is
+  from the `foo@.service` template), else the cleaned name. A `systemd-run` unit's Description
+  is its command line (`[systemd-run] /home/…/claude-t3 --output-format …`), so it is named by
+  the program it runs instead: the full name of its main process (the command may be a wrapper
+  script), else the command's first word after `setsid`/`env`/`nohup`, as a cleaned base name.
+  T3 Code runs each coding agent as such a unit inside `app-t3code-agents-<id>.slice`; those
+  are "<Program> agents" (`Claude agents`) with the terminal icon, and the row's detail counts
+  its groups as agents ("13 agents") rather than "groups". Without a desktop file the icon is
   the generic `application-x-executable`, which the window draws as its own gear icon
   (`crates/app/icons/generic-app.svg`). Results are cached per leaf name.
 
@@ -46,7 +52,7 @@ split rather than counted twice.
 
 | Column | Source |
 |---|---|
-| Name, PID | `/proc/<pid>/stat` `comm` |
+| Name, PID | `/proc/<pid>/stat` `comm`; a 15-byte `comm` may be cut by the kernel, so it is completed from the base name of `cmdline`'s `argv[0]`, else of `exe`, when that starts with it (else it stays) |
 | RAM | `Pss_Anon + Pss_Shmem` (the per-process part of RAM in use; file pages are file cache) |
 | Swapped out | `SwapPss` |
 | CPU | `utime + stime` from `/proc/<pid>/stat`, two reads one refresh apart, in cores |

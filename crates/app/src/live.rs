@@ -57,13 +57,9 @@ impl Reader {
         self.drills.retain(|key, _| expanded.contains(key));
         let mut apps = Vec::new();
         for app in &mem.apps {
-            let first = app.cgroups.first();
-            let leaf = first.and_then(|g| g.file_name()).unwrap_or_default();
-            let main = first.and_then(|g| main_process(&root.join(g)));
-            let named = self
-                .naming
-                .name(&leaf.to_string_lossy(), main.as_deref())
-                .clone();
+            let first = app.cgroups.first().cloned().unwrap_or_default();
+            let main = main_process(&root.join(&first));
+            let named = self.naming.name(&first, main.as_deref()).clone();
             let usage = |f: fn(&nvidia::AppUsage) -> f64| {
                 let gpu = gpu.as_ref()?;
                 let used: Vec<_> = app.cgroups.iter().filter_map(|g| gpu.apps.get(g)).collect();
@@ -111,9 +107,10 @@ impl Reader {
             apps.push(App {
                 key: app.name.clone(),
                 name: named.name,
-                detail: match app.cgroups.len() {
-                    1 => String::new(),
-                    n => format!("{n} groups"),
+                detail: match (app.cgroups.len(), named.agents) {
+                    (1, _) => String::new(),
+                    (n, true) => format!("{n} agents"),
+                    (n, false) => format!("{n} groups"),
                 },
                 icon: named.icon,
                 ram: app.ram,
@@ -165,12 +162,12 @@ fn leaf_name(group: &Path) -> String {
         .into()
 }
 
-/// `comm` of the group's first process, for naming emulators.
+/// Full name of the group's first process, for naming emulators and `systemd-run` units.
 fn main_process(group: &Path) -> Option<String> {
     let procs = std::fs::read_to_string(group.join("cgroup.procs")).ok()?;
-    let pid = procs.lines().next()?;
-    let comm = std::fs::read_to_string(Path::new(PROC_ROOT).join(pid).join("comm")).ok()?;
-    Some(comm.trim().to_string())
+    let dir = Path::new(PROC_ROOT).join(procs.lines().next()?);
+    let comm = std::fs::read_to_string(dir.join("comm")).ok()?;
+    Some(processes::full_name(&dir, comm.trim_end_matches('\n')))
 }
 
 /// `SwapTotal` from /proc/meminfo; 0 without swap.

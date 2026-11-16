@@ -1,7 +1,8 @@
 //! Friendly name and icon name for a cgroup leaf (see docs/accounting.md, "Apps are cgroups").
 //!
 //! Order: a running Android emulator gets its own name; then the `.desktop` file of the desktop
-//! or Flatpak id in the leaf name; then the unit file's `Description=`; then the cleaned name.
+//! or Flatpak id in the leaf name; then the unit file's `Description=`, or for a `systemd-run`
+//! unit (whose Description is its command line) the program it runs; then the cleaned name.
 //! Everything is read from files, once per leaf name.
 
 use std::collections::HashMap;
@@ -11,12 +12,16 @@ use std::path::{Path, PathBuf};
 
 /// Icon for anything without a desktop file (background services, terminals, transient units).
 pub const SERVICE_ICON: &str = "application-x-executable";
+/// Icon for coding agents (T3 Code's Claude, Codex and OpenCode units).
+pub const AGENT_ICON: &str = "utilities-terminal";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppName {
     pub name: String,
     /// Icon theme name or absolute path, as the desktop file gives it.
     pub icon: String,
+    /// One agent per group: the window counts the app's groups as agents.
+    pub agents: bool,
 }
 
 pub struct Naming {
@@ -84,21 +89,25 @@ impl Naming {
         Self::new(desktop_dirs, unit_dirs)
     }
 
-    /// Name and icon for a leaf such as `app-flatpak-app.zen_browser.zen-1234.scope`.
-    /// `main_process` is the `comm` of the group's main process, if known.
-    pub fn name(&mut self, leaf: &str, main_process: Option<&str>) -> &AppName {
-        if !self.cache.contains_key(leaf) {
-            let resolved = self.resolve(leaf, main_process);
-            self.cache.insert(leaf.to_owned(), resolved);
+    /// Name and icon for a group such as `…/app-flatpak-app.zen_browser.zen-1234.scope`,
+    /// relative to the cgroup root. `main_process` is the full name of the group's main process
+    /// ([`crate::processes::full_name`]), if known.
+    pub fn name(&mut self, group: impl AsRef<Path>, main_process: Option<&str>) -> &AppName {
+        let group = group.as_ref();
+        let leaf = group.file_name().unwrap_or_default().to_string_lossy();
+        if !self.cache.contains_key(leaf.as_ref()) {
+            let resolved = self.resolve(group, &leaf, main_process);
+            self.cache.insert(leaf.to_string(), resolved);
         }
-        &self.cache[leaf]
+        &self.cache[leaf.as_ref()]
     }
 
-    fn resolve(&self, leaf: &str, main_process: Option<&str>) -> AppName {
+    fn resolve(&self, group: &Path, leaf: &str, main_process: Option<&str>) -> AppName {
         let cleaned = clean_name(leaf);
         let generic = |name: String| AppName {
             name,
             icon: SERVICE_ICON.into(),
+            agents: false,
         };
 
         // An emulator's unit Description is its whole shell command; the instance says more.
@@ -109,9 +118,31 @@ impl Naming {
         if let Some(app) = app_id(leaf).and_then(|id| self.desktop_entry(&id)) {
             return app;
         }
-        match self.unit_description(leaf) {
-            Some(description) => generic(description),
-            None => generic(cleaned),
+        let Some(description) = self.unit_description(leaf) else {
+            return generic(cleaned);
+        };
+        let Some(command) = description.strip_prefix("[systemd-run] ") else {
+            return generic(description);
+        };
+        // The main process names the program better than the command, which may be a wrapper
+        // script (`claude-t3` execs `claude`).
+        let program = main_process
+            .map(str::to_owned)
+            .or_else(|| command_program(command))
+            .map_or(cleaned, |p| clean_name(&p));
+        if !in_agents_slice(group) {
+            return generic(program);
+        }
+        let mut chars = program.chars();
+        let capital: String = chars
+            .next()
+            .into_iter()
+            .flat_map(char::to_uppercase)
+            .collect();
+        AppName {
+            name: format!("{capital}{} agents", chars.as_str()),
+            icon: AGENT_ICON.into(),
+            agents: true,
         }
     }
 
@@ -122,6 +153,7 @@ impl Naming {
         Some(AppName {
             name: name.into(),
             icon: icon.into(),
+            agents: false,
         })
     }
 
@@ -136,6 +168,33 @@ impl Naming {
             group_value(&text, "Unit", "Description").map(str::to_owned)
         })
     }
+}
+
+/// The program a `systemd-run` command line runs: the first word that isn't a launcher
+/// (`setsid`, `env`, `nohup`), one of their options or a `VAR=value`, as a base name.
+fn command_program(command: &str) -> Option<String> {
+    command
+        .split_whitespace()
+        .map(|word| word.trim_matches(['"', '\'']))
+        .map(|word| word.rsplit('/').next().unwrap_or(word))
+        .find(|word| {
+            !word.is_empty()
+                && !word.starts_with('-')
+                && !word.contains('=')
+                && !matches!(*word, "setsid" | "env" | "nohup")
+        })
+        .map(str::to_owned)
+}
+
+/// T3 Code puts each agent's unit in `app-t3code-agents-<id>.slice`.
+fn in_agents_slice(group: &Path) -> bool {
+    group
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|slice| {
+            let name = clean_name(&slice.to_string_lossy());
+            name == "agents" || name.ends_with("-agents")
+        })
 }
 
 /// The leaf's name without unit suffix, `app-` and launcher prefixes, random or numeric tail
@@ -254,6 +313,7 @@ mod tests {
         AppName {
             name: name.into(),
             icon: icon.into(),
+            agents: false,
         }
     }
 
@@ -376,5 +436,54 @@ mod tests {
         );
         let name = naming.name("emulator-guide35.service", Some("qemu-system-x86"));
         assert_eq!(name, &app("Android emulator · guide35", SERVICE_ICON));
+    }
+
+    #[test]
+    fn systemd_run_units_are_named_by_their_program() {
+        let claude = "[Unit]\nDescription=[systemd-run] /home/u/.local/bin/claude-t3 --model=x \"--allowedTools=a b\"\n";
+        let mut naming = fixture(
+            "systemd-run",
+            &[],
+            &[
+                ("t3code-claude-039d3df7.scope", claude),
+                ("t3code-claude-265ff82f.scope", claude),
+                (
+                    "t3code-opencode-116db5a8.scope",
+                    "[Unit]\nDescription=[systemd-run] /home/u/.opencode/bin/opencode serve --port=1\n",
+                ),
+                (
+                    "run-u42.service",
+                    "[Unit]\nDescription=[systemd-run] /usr/bin/setsid -f env A=1 /usr/bin/sebchat --night\n",
+                ),
+            ],
+        );
+        let agents = "app.slice/app-t3code.slice/app-t3code-agents.slice/app-t3code-agents-abaa00bbacbc.slice";
+        let agent = |name: &str| AppName {
+            name: name.into(),
+            icon: AGENT_ICON.into(),
+            agents: true,
+        };
+        // The main process wins over the wrapper script in the command line.
+        assert_eq!(
+            naming.name(
+                format!("{agents}/t3code-claude-039d3df7.scope"),
+                Some("claude")
+            ),
+            &agent("Claude agents")
+        );
+        // Without a readable main process: the command's program.
+        assert_eq!(
+            naming.name(format!("{agents}/t3code-claude-265ff82f.scope"), None),
+            &agent("Claude-t3 agents")
+        );
+        assert_eq!(
+            naming.name(format!("{agents}/t3code-opencode-116db5a8.scope"), None),
+            &agent("Opencode agents")
+        );
+        // Outside an agents slice: the program's name, launchers skipped.
+        assert_eq!(
+            naming.name("app.slice/run-u42.service", None),
+            &app("sebchat", SERVICE_ICON)
+        );
     }
 }
