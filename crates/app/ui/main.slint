@@ -1238,6 +1238,8 @@ export component MainWindow inherits Window {
                         spacing: Theme.picnic ? 14px : 8px;
                         for tile[i] in root.tiles: TileView {
                             tile: tile;
+                            // Fixed: the grid would otherwise give the columns unequal widths.
+                            width: 180px;
                             row: root.wide ? floor(i / 2) : i;
                             col: root.wide ? mod(i, 2) : 0;
                         }
