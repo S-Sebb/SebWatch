@@ -77,15 +77,8 @@ pub struct Exited {
 /// Reads the accounting from a cgroup v2 root and a procfs root ([`CGROUP_ROOT`] and
 /// [`PROC_ROOT`] on a live system; a fixture tree in tests).
 pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> {
-    let meminfo = fs::read_to_string(proc_root.join("meminfo"))?;
-    let kb = |key: &str| {
-        meminfo
-            .lines()
-            .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
-            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
-            .map(|v| v * 1024)
-            .ok_or_else(|| io::Error::other(format!("meminfo has no {key}")))
-    };
+    let meminfo = read_meminfo(proc_root)?;
+    let kb = |key: &str| meminfo_bytes(&meminfo, key);
     let (total, free, available, zswap) = (
         kb("MemTotal")?,
         kb("MemFree")?,
@@ -95,7 +88,7 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
 
     // Memory is charged to the nearest group with the memory controller, which may be an
     // ancestor of the groups that hold the processes (`systemd-udevd.service/udev`).
-    let groups = cgroup::walk(cgroup_root)?;
+    let groups = cgroup::walk(cgroup_root).map_err(|e| cannot_read(cgroup_root, e))?;
     let mut charged_to: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
     for group in groups.with_processes {
         let mut memory_group = group.as_path();
@@ -234,6 +227,68 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
         kernel_and_drivers,
         available,
         pressure_avg10,
+    })
+}
+
+fn cannot_read(path: &Path, error: io::Error) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!("cannot read {}: {error}", path.display()),
+    )
+}
+
+fn read_meminfo(proc_root: &Path) -> io::Result<String> {
+    let path = proc_root.join("meminfo");
+    fs::read_to_string(&path).map_err(|e| cannot_read(&path, e))
+}
+
+fn meminfo_bytes(meminfo: &str, key: &str) -> io::Result<u64> {
+    meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        .map(|v| v * 1024)
+        .ok_or_else(|| io::Error::other(format!("/proc/meminfo has no {key}")))
+}
+
+/// Whether memory can be split by app here: cgroup v2 with the memory controller enabled below
+/// the root, and the per-app groups of a systemd user session
+/// (`user.slice/user-<uid>.slice/user@<uid>.service`).
+pub fn splits_by_app(cgroup_root: &Path) -> bool {
+    let controls =
+        fs::read_to_string(cgroup_root.join("cgroup.subtree_control")).unwrap_or_default();
+    let users = fs::read_dir(cgroup_root.join("user.slice"))
+        .into_iter()
+        .flatten()
+        .flatten();
+    controls.split_whitespace().any(|c| c == "memory")
+        && users.into_iter().any(|user| {
+            fs::read_dir(user.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("user@"))
+        })
+}
+
+/// The whole system's memory from `/proc/meminfo`, for a system that can't split it by app.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Totals {
+    pub total: u64,
+    pub free: u64,
+    /// Page cache, `Active(file) + Inactive(file)`.
+    pub file_cache: u64,
+    pub zswap_pool: u64,
+}
+
+pub fn totals(proc_root: &Path) -> io::Result<Totals> {
+    let meminfo = read_meminfo(proc_root)?;
+    let kb = |key: &str| meminfo_bytes(&meminfo, key);
+    Ok(Totals {
+        total: kb("MemTotal")?,
+        free: kb("MemFree")?,
+        file_cache: kb("Active(file)")? + kb("Inactive(file)")?,
+        zswap_pool: kb("Zswap").unwrap_or(0),
     })
 }
 

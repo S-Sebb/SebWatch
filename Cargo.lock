@@ -3699,6 +3699,7 @@ dependencies = [
 name = "sebwatch"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "png",
  "sebwatch-core",
  "slint",

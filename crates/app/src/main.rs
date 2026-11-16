@@ -1,4 +1,5 @@
 mod art;
+mod clock;
 mod desktop;
 mod history;
 mod icons;
@@ -41,6 +42,8 @@ fn show(window: &MainWindow, shown: model::Shown) {
     window.set_sort_ascending(shown.sort.ascending);
     window.set_filtered(shown.filtered.into());
     window.set_current(shown.focus);
+    window.set_warning(shown.warning.into());
+    window.set_unsplit(shown.unsplit);
 }
 
 /// Shows a new reading.
@@ -137,8 +140,17 @@ fn read_loop(
                     return;
                 }
             }
-            // A transient failure (a group vanishing mid-read): keep the last reading.
-            Err(error) => eprintln!("sebwatch: reading failed, showing the last one: {error}"),
+            // The last reading stays, with a warning saying it is not updating and why.
+            Err(error) => {
+                eprintln!("sebwatch: reading failed, showing the last one: {error}");
+                let error = error.to_string();
+                let shown = window.upgrade_in_event_loop(move |window| {
+                    VIEW.with_borrow_mut(|view| show(&window, view.failed(error)));
+                });
+                if shown.is_err() {
+                    return;
+                }
+            }
         }
     }
 }
@@ -162,9 +174,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let first = reader
         .read(REFRESH, &HashSet::new())
         .unwrap_or_else(|error| {
-            eprintln!(
-                "sebwatch: cannot read memory use (needs cgroup v2 at /sys/fs/cgroup): {error}"
-            );
+            eprintln!("sebwatch: cannot read memory use: {error}");
             std::process::exit(1);
         });
     let (toggled, toggles) = mpsc::channel();

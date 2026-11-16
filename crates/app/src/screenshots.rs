@@ -246,6 +246,19 @@ fn screenshots() {
         }
         shot.save(&shot.render(), &dir.join(format!("app-{name}-asleep.png")));
 
+        // #38: readings that failed. The NVIDIA driver silent and no io.stat; then three failed
+        // refreshes in a row; then a system that can't split memory by app.
+        crate::present(&ui, crate::sample::unavailable());
+        shot.save(&shot.render(), &dir.join(format!("unavailable-{name}.png")));
+        crate::present(&ui, crate::sample::snapshot());
+        let error = "cannot read /sys/fs/cgroup/user.slice/memory.stat: No such file or directory";
+        for _ in 0..3 {
+            crate::VIEW.with_borrow_mut(|view| crate::show(&ui, view.failed(error.into())));
+        }
+        shot.save(&shot.render(), &dir.join(format!("stale-{name}.png")));
+        crate::present(&ui, crate::sample::unsplit());
+        shot.save(&shot.render(), &dir.join(format!("unaccounted-{name}.png")));
+
         // Sorted by swap, largest first, then smallest first.
         crate::present(&ui, crate::sample::snapshot());
         toggle(&ui, "Android emulator");

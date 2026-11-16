@@ -9,8 +9,8 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counters {
     pub usage_usec: u64,
-    pub read_bytes: u64,
-    pub write_bytes: u64,
+    /// Bytes read and written, None without `io.stat`.
+    pub io: Option<(u64, u64)>,
 }
 
 /// Counters of every leaf group, keyed by its path relative to the cgroup root.
@@ -20,8 +20,8 @@ pub type Sample = BTreeMap<PathBuf, Counters>;
 pub struct Rates {
     /// 1.0 = one core busy for the whole interval.
     pub cpu_cores: f64,
-    pub read_bytes_per_sec: f64,
-    pub write_bytes_per_sec: f64,
+    /// Bytes read and written per second, None where the group has no `io.stat`.
+    pub io: Option<(f64, f64)>,
 }
 
 /// Reads the counters of `groups`, paths relative to `root` (the groups with processes, see
@@ -38,16 +38,10 @@ pub fn read_sample<'a>(root: &Path, groups: impl IntoIterator<Item = &'a PathBuf
             continue;
         };
         // io.stat is absent when the io controller isn't enabled for this subtree: no disk numbers.
-        let (read_bytes, write_bytes) =
-            fs::read_to_string(dir.join("io.stat")).map_or((0, 0), |s| parse_io_stat(&s));
-        sample.insert(
-            rel.clone(),
-            Counters {
-                usage_usec,
-                read_bytes,
-                write_bytes,
-            },
-        );
+        let io = fs::read_to_string(dir.join("io.stat"))
+            .ok()
+            .map(|s| parse_io_stat(&s));
+        sample.insert(rel.clone(), Counters { usage_usec, io });
     }
     sample
 }
@@ -72,7 +66,7 @@ fn parse_io_stat(io_stat: &str) -> (u64, u64) {
 }
 
 /// Rates per group over `elapsed`, for the groups in `cur`. A group that is new since `prev`
-/// shows zero this round: its counters hold its whole lifetime, not the last interval. Groups
+/// shows zero this round (disk unknown without `io.stat`): its counters hold its whole lifetime, not the last interval. Groups
 /// that vanished are dropped. A counter that went down (path reused by a new group) counts as 0.
 pub fn rates(prev: &Sample, cur: &Sample, elapsed: Duration) -> BTreeMap<PathBuf, Rates> {
     let secs = elapsed.as_secs_f64();
@@ -81,12 +75,15 @@ pub fn rates(prev: &Sample, cur: &Sample, elapsed: Duration) -> BTreeMap<PathBuf
             let rates = match prev.get(path) {
                 Some(before) if secs > 0.0 => Rates {
                     cpu_cores: now.usage_usec.saturating_sub(before.usage_usec) as f64 / 1e6 / secs,
-                    read_bytes_per_sec: now.read_bytes.saturating_sub(before.read_bytes) as f64
-                        / secs,
-                    write_bytes_per_sec: now.write_bytes.saturating_sub(before.write_bytes) as f64
-                        / secs,
+                    io: now.io.zip(before.io).map(|((r, w), (r0, w0))| {
+                        let per_sec = |n: u64, n0: u64| n.saturating_sub(n0) as f64 / secs;
+                        (per_sec(r, r0), per_sec(w, w0))
+                    }),
                 },
-                _ => Rates::default(),
+                _ => Rates {
+                    cpu_cores: 0.0,
+                    io: now.io.map(|_| (0.0, 0.0)),
+                },
             };
             (path.clone(), rates)
         })
@@ -172,11 +169,26 @@ mod tests {
             r[Path::new(app)],
             Rates {
                 cpu_cores: 1.5,
-                read_bytes_per_sec: 1000.0,
-                write_bytes_per_sec: 2000.0
+                io: Some((1000.0, 2000.0)),
             }
         );
-        assert_eq!(r[Path::new("system.slice/new.service")], Rates::default());
+        let new = Rates {
+            cpu_cores: 0.0,
+            io: Some((0.0, 0.0)),
+        };
+        assert_eq!(r[Path::new("system.slice/new.service")], new);
+    }
+
+    #[test]
+    fn a_group_without_io_stat_has_no_disk_figures() {
+        let fx = Fixture::new("no-io");
+        fx.group("system.slice/a.service", "1\n", 1_000_000, None);
+        let groups = walk(&fx.0).unwrap().with_processes;
+        let first = read_sample(&fx.0, &groups);
+        fx.group("system.slice/a.service", "1\n", 3_000_000, None);
+        let second = read_sample(&fx.0, &groups);
+        let r = rates(&first, &second, Duration::from_secs(2));
+        assert_eq!(r[Path::new("system.slice/a.service")].io, None);
     }
 
     #[test]
@@ -186,21 +198,22 @@ mod tests {
             path.clone(),
             Counters {
                 usage_usec: 9_000_000,
-                read_bytes: 500,
-                write_bytes: 500,
+                io: Some((500, 500)),
             },
         )]);
         let cur = Sample::from([(
             path.clone(),
             Counters {
                 usage_usec: 1_000,
-                read_bytes: 0,
-                write_bytes: 0,
+                io: Some((0, 0)),
             },
         )]);
         assert_eq!(
             rates(&prev, &cur, Duration::from_secs(1))[&path],
-            Rates::default()
+            Rates {
+                cpu_cores: 0.0,
+                io: Some((0.0, 0.0)),
+            }
         );
     }
 }

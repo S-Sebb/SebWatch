@@ -35,7 +35,8 @@ pub struct Snapshot {
     pub apps: Vec<App>,
     /// Memory still charged to groups whose processes all exited, outside any running app.
     pub closed: Closed,
-    pub cpu_used: f32,
+    /// None when no group's CPU could be read.
+    pub cpu_used: Option<f32>,
     pub cpu_cores: u32,
     pub nvidia_percent: Option<f32>,
     pub intel_percent: Option<f32>,
@@ -43,7 +44,17 @@ pub struct Snapshot {
     pub vram: Option<(u64, u64)>,
     /// The NVIDIA GPU sleeps: no VRAM figures, as reading them would wake it.
     pub gpu_asleep: bool,
-    pub disk_per_s: u64,
+    /// The NVIDIA GPU is awake but its driver doesn't answer: no GPU or VRAM figures.
+    pub nvidia_unavailable: bool,
+    /// None when no group has `io.stat` (the io controller is off).
+    pub disk_per_s: Option<u64>,
+    /// Some on a system that can't split memory by app (no cgroup v2 memory accounting or no
+    /// systemd user session): `apps` is empty and `kernel` holds all memory in use.
+    pub unsplit: Option<Unsplit>,
+}
+
+pub struct Unsplit {
+    pub swap_used: u64,
 }
 
 pub struct App {
@@ -65,7 +76,8 @@ pub struct App {
     pub swap: u64,
     pub file_cache: u64,
     pub cpu: f32,
-    pub disk_per_s: u64,
+    /// None when none of its groups has `io.stat`.
+    pub disk_per_s: Option<u64>,
     pub gpu_percent: Option<f32>,
     pub vram: Option<u64>,
     pub parts: Vec<Part>,
@@ -149,7 +161,7 @@ impl Column {
             Column::Swap => app.swap as f64,
             Column::Cache => app.file_cache as f64,
             Column::Cpu => app.cpu as f64,
-            Column::Disk => app.disk_per_s as f64,
+            Column::Disk => app.disk_per_s.map_or(-1.0, |d| d as f64),
             Column::Gpu => app.gpu_percent.map_or(-1.0, |p| p as f64),
             Column::Vram => app.vram.map_or(-1.0, |b| b as f64),
         }
@@ -237,6 +249,13 @@ pub struct View {
     expanded: HashSet<String>,
     icons: Icons,
     history: History,
+    /// Set from the reading for the rows: the NVIDIA driver didn't answer.
+    gpu_unavailable: bool,
+    /// Readings failed in a row since the last one shown, and the last error.
+    failures: u32,
+    error: String,
+    /// When the reading shown was taken, as local "HH:MM:SS".
+    shown_at: String,
     /// The last rendered rows, in order.
     tree: Vec<Node>,
     focus: Option<Focus>,
@@ -272,6 +291,10 @@ pub struct Shown {
     pub filtered: String,
     /// The focused row's index in `rows`, -1 for none.
     pub focus: i32,
+    /// Why the figures aren't updating, empty while they are.
+    pub warning: String,
+    /// The system can't split memory by app: a message replaces the table.
+    pub unsplit: bool,
 }
 
 /// The key of the "N more apps" row.
@@ -436,7 +459,16 @@ impl View {
     /// Shows a new reading.
     pub fn update(&mut self, snapshot: Snapshot) -> Shown {
         self.history.push(snapshot.taken, readings(&snapshot));
+        self.failures = 0;
+        self.shown_at = crate::clock::now();
         self.last = Some(snapshot);
+        self.render()
+    }
+
+    /// A reading failed: the last one stays, with a warning saying so.
+    pub fn failed(&mut self, error: String) -> Shown {
+        self.failures += 1;
+        self.error = error;
         self.render()
     }
 
@@ -450,6 +482,7 @@ impl View {
 
     fn show(&mut self, s: &Snapshot) -> Shown {
         self.tree.clear();
+        self.gpu_unavailable = s.nvidia_unavailable;
         let ram = top(&s.apps, |a| a.ram);
         let swap = top(&s.apps, |a| a.swap);
         let vram = top(&s.apps, |a| a.vram.unwrap_or(0));
@@ -472,6 +505,20 @@ impl View {
             tiles: tiles(s, &self.history),
             rows: self.rows(s, &series),
             focus: self.refocus(),
+            warning: match self.failures {
+                0 => String::new(),
+                n => format!(
+                    "Not updating: the last {} failed ({}). Showing the reading from {}.",
+                    if n == 1 {
+                        "reading".into()
+                    } else {
+                        format!("{n} readings")
+                    },
+                    self.error,
+                    self.shown_at
+                ),
+            },
+            unsplit: s.unsplit.is_some(),
             sort: self.sort,
             filtered: match self.searching() {
                 Some(query) => format!(
@@ -586,9 +633,19 @@ impl View {
             swap: bytes(app.swap).into(),
             cache: bytes(app.file_cache).into(),
             cpu: cores(app.cpu).into(),
-            disk: rate(app.disk_per_s).into(),
-            gpu: app.gpu_percent.map_or(NONE.into(), percent).into(),
-            vram: app.vram.map_or(NONE.into(), bytes).into(),
+            disk: app.disk_per_s.map_or(NA.into(), rate).into(),
+            gpu: match app.gpu_percent {
+                _ if self.gpu_unavailable => NA.into(),
+                Some(p) => percent(p),
+                None => NONE.into(),
+            }
+            .into(),
+            vram: match app.vram {
+                _ if self.gpu_unavailable => NA.into(),
+                Some(b) => bytes(b),
+                None => NONE.into(),
+            }
+            .into(),
             tip: "".into(),
         });
         if !expanded {
@@ -692,7 +749,10 @@ fn leftover_row(app: &App) -> Row {
     }
 }
 
+/// A figure that doesn't apply ("0" is zero, "n/a" a reading that failed).
 const NONE: &str = "—";
+/// A figure that couldn't be read.
+const NA: &str = "n/a";
 
 /// Whether a search (in lower case) finds the app: part of its name or one of its groups' names,
 /// or one of its PIDs in full.
@@ -855,6 +915,15 @@ fn stack(segments: &mut [Segment]) {
     }
 }
 
+fn bar(title: &str, total: String, segments: Vec<Segment>, note: &str) -> Bar {
+    Bar {
+        title: title.into(),
+        total: total.into(),
+        segments: ModelRc::from(Rc::new(VecModel::from(segments))),
+        note: note.into(),
+    }
+}
+
 fn memory_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
     let total = s.ram_total;
     let mut segments: Vec<Segment> = named
@@ -907,21 +976,33 @@ fn memory_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
             total,
             &["freed when apps need the room".into()],
         ),
-        segment(
-            SegmentKind::Kernel,
-            "Kernel, drivers and unattributed",
-            s.kernel,
-            total,
-            &["includes memory no app could be charged for".into()],
-        ),
+        if s.unsplit.is_some() {
+            segment(
+                SegmentKind::Kernel,
+                "Used, not split by app",
+                s.kernel,
+                total,
+                &["this system can't charge memory to apps".into()],
+            )
+        } else {
+            segment(
+                SegmentKind::Kernel,
+                "Kernel, drivers and unattributed",
+                s.kernel,
+                total,
+                &["includes memory no app could be charged for".into()],
+            )
+        },
         segment(SegmentKind::Free, "Free", s.free, total, &[]),
     ]);
-    stack(&mut segments);
-    Bar {
-        title: "Memory".into(),
-        total: format!("{} used of {}", bytes(total - s.free), bytes(total)).into(),
-        segments: ModelRc::from(Rc::new(VecModel::from(segments))),
+    if s.unsplit.is_some() {
+        // No apps: memory in use leads, where they would be.
+        let used = segments.remove(segments.len() - 2);
+        segments.insert(0, used);
     }
+    stack(&mut segments);
+    let used = format!("{} used of {}", bytes(total - s.free), bytes(total));
+    bar("Memory", used, segments, "")
 }
 
 fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
@@ -933,7 +1014,19 @@ fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
             app_segment(app, c, app.swap, total, "in swap", Vec::new())
         })
         .collect();
-    let used: u64 = s.apps.iter().map(|a| a.swap).sum::<u64>() + s.closed.swap;
+    let used = match &s.unsplit {
+        Some(unsplit) => {
+            segments.push(segment(
+                SegmentKind::Other,
+                "Used swap",
+                unsplit.swap_used,
+                total,
+                &[],
+            ));
+            unsplit.swap_used
+        }
+        None => s.apps.iter().map(|a| a.swap).sum::<u64>() + s.closed.swap,
+    };
     segments.extend(others(&s.apps, named, |a| a.swap, total));
     segments.extend(closed_segment(
         &s.closed,
@@ -950,23 +1043,25 @@ fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
         &[],
     ));
     stack(&mut segments);
-    Bar {
-        title: "Swap".into(),
-        total: format!("{} used of {}", bytes(used), bytes(total)).into(),
-        segments: ModelRc::from(Rc::new(VecModel::from(segments))),
-    }
+    bar(
+        "Swap",
+        format!("{} used of {}", bytes(used), bytes(total)),
+        segments,
+        "",
+    )
 }
 
 /// VRAM by app from NVML's per-process figures, the rest of the used VRAM as "Driver and other".
-/// Empty while the GPU sleeps.
+/// Empty while the GPU sleeps or its driver doesn't answer.
 fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
-    let bar = |total: String, segments: Vec<Segment>| Bar {
-        title: "VRAM".into(),
-        total: total.into(),
-        segments: ModelRc::from(Rc::new(VecModel::from(segments))),
-    };
     let Some((used, total)) = s.vram else {
-        return s.gpu_asleep.then(|| bar("GPU asleep".into(), Vec::new()));
+        if s.nvidia_unavailable {
+            let note = "The NVIDIA driver is not answering";
+            return Some(bar("VRAM", "unavailable".into(), Vec::new(), note));
+        }
+        return s
+            .gpu_asleep
+            .then(|| bar("VRAM", "GPU asleep".into(), Vec::new(), ""));
     };
     let vram = |app: &App| app.vram.unwrap_or(0);
     let mut segments: Vec<Segment> = named
@@ -993,7 +1088,11 @@ fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
     if unattributed > 0 {
         segments.push(segment(
             SegmentKind::Kernel,
-            "Driver and other",
+            if s.unsplit.is_some() {
+                "Used"
+            } else {
+                "Driver and other"
+            },
             unattributed,
             total,
             &["used, but by no app's process".into()],
@@ -1008,8 +1107,10 @@ fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
     ));
     stack(&mut segments);
     Some(bar(
+        "VRAM",
         format!("{} used of {}", bytes(used), bytes(total)),
         segments,
+        "",
     ))
 }
 
@@ -1017,12 +1118,12 @@ fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
 /// whole, Disk in bytes/s. A sleeping GPU has none.
 fn readings(s: &Snapshot) -> [Option<f32>; 4] {
     [
-        Some(s.cpu_used / s.cpu_cores.max(1) as f32),
+        s.cpu_used.map(|cpu| cpu / s.cpu_cores.max(1) as f32),
         s.nvidia_percent
             .filter(|_| !s.gpu_asleep)
             .map(|p| p / 100.0),
         s.vram.map(|(used, total)| share(used, total)),
-        Some(s.disk_per_s as f32),
+        s.disk_per_s.map(|d| d as f32),
     ]
 }
 
@@ -1040,44 +1141,62 @@ fn tile(name: &str, value: String, unit: String, graph: Option<(&History, Measur
     }
 }
 
+/// A tile whose reading failed: it says so, with no figure and no graph.
+fn unavailable(name: &str) -> Tile {
+    tile(name, String::new(), UNAVAILABLE.into(), None)
+}
+
+const UNAVAILABLE: &str = "unavailable";
+
 fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
-    let mut tiles = vec![tile(
-        "CPU",
-        format!("{:.1}", s.cpu_used),
-        format!("of {} cores", s.cpu_cores),
-        Some((history, Measure::Cpu)),
-    )];
-    // A sleeping GPU keeps its tiles, saying so in place of the figures and graphs not read (no
-    // value: the words need the tile's width).
-    if let Some(nvidia) = s.nvidia_percent {
-        let (value, nvidia_unit) = if s.gpu_asleep {
-            (String::new(), "NVIDIA asleep")
-        } else {
-            (percent(nvidia), "NVIDIA")
-        };
-        let unit = match s.intel_percent {
-            Some(intel) => format!("{nvidia_unit} · {} Intel", percent(intel)),
-            None => nvidia_unit.into(),
-        };
-        let graph = (!s.gpu_asleep).then_some((history, Measure::Gpu));
-        tiles.push(tile("GPU", value, unit, graph));
+    let mut tiles = vec![match s.cpu_used {
+        Some(cpu) => tile(
+            "CPU",
+            format!("{cpu:.1}"),
+            format!("of {} cores", s.cpu_cores),
+            Some((history, Measure::Cpu)),
+        ),
+        None => unavailable("CPU"),
+    }];
+    // A sleeping or silent GPU keeps its tiles, saying so in place of the figures and graphs not
+    // read (no value: the words need the tile's width).
+    let intel = |unit: &str| match s.intel_percent {
+        Some(intel) => format!("{unit} · {} Intel", percent(intel)),
+        None => unit.into(),
+    };
+    if s.nvidia_unavailable {
+        tiles.push(tile("GPU", String::new(), intel(UNAVAILABLE), None));
+        tiles.push(unavailable("VRAM"));
+    } else {
+        if let Some(nvidia) = s.nvidia_percent {
+            let (value, unit) = if s.gpu_asleep {
+                (String::new(), "NVIDIA asleep")
+            } else {
+                (percent(nvidia), "NVIDIA")
+            };
+            let graph = (!s.gpu_asleep).then_some((history, Measure::Gpu));
+            tiles.push(tile("GPU", value, intel(unit), graph));
+        }
+        if let Some((used, total)) = s.vram {
+            tiles.push(tile(
+                "VRAM",
+                format!("{:.1}", used as f64 / GB),
+                format!("of {:.1} GB", total as f64 / GB),
+                Some((history, Measure::Vram)),
+            ));
+        } else if s.gpu_asleep {
+            tiles.push(tile("VRAM", String::new(), "GPU asleep".into(), None));
+        }
     }
-    if let Some((used, total)) = s.vram {
-        tiles.push(tile(
-            "VRAM",
-            format!("{:.1}", used as f64 / GB),
-            format!("of {:.1} GB", total as f64 / GB),
-            Some((history, Measure::Vram)),
-        ));
-    } else if s.gpu_asleep {
-        tiles.push(tile("VRAM", String::new(), "GPU asleep".into(), None));
-    }
-    tiles.push(tile(
-        "Disk",
-        format!("{:.1}", s.disk_per_s as f64 / MB),
-        "MB/s read + write".into(),
-        Some((history, Measure::Disk)),
-    ));
+    tiles.push(match s.disk_per_s {
+        Some(disk) => tile(
+            "Disk",
+            format!("{:.1}", disk as f64 / MB),
+            "MB/s read + write".into(),
+            Some((history, Measure::Disk)),
+        ),
+        None => unavailable("Disk"),
+    });
     tiles
 }
 
@@ -1583,5 +1702,97 @@ mod tests {
              share pages with other apps' processes, and the kernel charges each shared page to \
              one app."
         ));
+    }
+
+    fn tile_texts(shown: &Shown) -> Vec<(String, String, bool)> {
+        shown
+            .tiles
+            .iter()
+            .map(|t| (t.name.to_string(), t.unit.to_string(), t.graphed))
+            .collect()
+    }
+
+    #[test]
+    fn failed_readings_say_unavailable_and_zero_stays_zero() {
+        let mut s = crate::sample::unavailable();
+        s.cpu_used = None;
+        let shown = View::default().update(s);
+        let tiles = tile_texts(&shown);
+        let t = |name: &str, unit: &str| (name.to_string(), unit.to_string(), false);
+        assert_eq!(
+            tiles,
+            [
+                t("CPU", "unavailable"),
+                t("GPU", "unavailable · 3% Intel"),
+                t("VRAM", "unavailable"),
+                t("Disk", "unavailable"),
+            ]
+        );
+        assert!(shown.tiles.iter().all(|t| t.value.is_empty()));
+        let vram = shown.vram.unwrap();
+        assert_eq!(vram.total, "unavailable");
+        assert_eq!(vram.note, "The NVIDIA driver is not answering");
+        let apps: Vec<_> = shown
+            .rows
+            .iter()
+            .filter(|r| r.kind == RowKind::App)
+            .collect();
+        assert!(
+            apps.iter()
+                .all(|r| r.disk == NA && r.gpu == NA && r.vram == NA)
+        );
+
+        // A reading that worked: zero is "0", a figure that doesn't apply "—".
+        let shown = View::default().update(crate::sample::snapshot());
+        let steam = shown.rows.iter().find(|r| r.name == "Steam").unwrap();
+        assert_eq!((steam.disk.as_str(), steam.gpu.as_str()), ("0", NONE));
+    }
+
+    #[test]
+    fn failed_reads_keep_the_last_reading_with_a_warning_until_one_works() {
+        let mut view = View::default();
+        assert_eq!(view.update(crate::sample::snapshot()).warning, "");
+        let once = view
+            .failed("cannot read /proc/meminfo: gone".into())
+            .warning;
+        assert!(
+            once.starts_with(
+                "Not updating: the last reading failed (cannot read /proc/meminfo: gone). \
+                 Showing the reading from "
+            ),
+            "{once}"
+        );
+        let shown = view.failed("cannot read /sys/fs/cgroup: gone".into());
+        assert!(shown.warning.starts_with(
+            "Not updating: the last 2 readings failed (cannot read /sys/fs/cgroup: gone)"
+        ));
+        // The time of the reading shown, "HH:MM:SS".
+        let time = shown
+            .warning
+            .trim_end_matches('.')
+            .rsplit(' ')
+            .next()
+            .unwrap();
+        assert!(time.len() == 8 && time.split(':').count() == 3, "{time}");
+        assert_eq!(names(&shown.memory), names(&view.render().memory));
+        assert_eq!(view.update(crate::sample::snapshot()).warning, "");
+    }
+
+    #[test]
+    fn a_system_that_cannot_split_memory_shows_totals_and_says_why() {
+        let shown = View::default().update(crate::sample::unsplit());
+        assert!(shown.unsplit);
+        assert!(shown.rows.is_empty());
+        assert_eq!(
+            names(&shown.memory),
+            ["Used, not split by app", "Zswap pool", "File cache", "Free"]
+        );
+        let sum: f32 = slint::Model::iter(&shown.memory.segments)
+            .map(|s| s.fraction)
+            .sum();
+        assert!((sum - 1.0).abs() < 1e-4, "RAM bar sums to {sum}");
+        assert_eq!(names(&shown.swap), ["Used swap", "Free swap"]);
+        assert_eq!(shown.swap.total, "15.6 GB used of 32.0 GB");
+        assert_eq!(names(&shown.vram.unwrap()), ["Used", "Free"]);
     }
 }

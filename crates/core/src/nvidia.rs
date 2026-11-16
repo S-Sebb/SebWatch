@@ -18,6 +18,8 @@ pub enum Nvidia {
     /// Runtime-suspended; NVML was not loaded so it stays asleep.
     Asleep,
     Awake(Gpu),
+    /// Awake, its driver installed, but NVML failed to start or to read it.
+    NotAnswering,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +46,7 @@ struct ProcUsage {
     sm_percent: f64,
 }
 
-/// The NVIDIA GPU's state, or None when there is no NVIDIA GPU or no usable driver.
+/// The NVIDIA GPU's state, or None when there is no NVIDIA GPU or no NVIDIA driver.
 /// SM % is averaged over the last `window` (pass the refresh interval).
 pub fn read(window: Duration) -> Option<Nvidia> {
     let (bus_id, asleep) = find_gpu(Path::new("/sys/bus/pci/devices"))?;
@@ -53,7 +55,10 @@ pub fn read(window: Duration) -> Option<Nvidia> {
     }
     // The GPU can suspend between the status check and NVML init; then init wakes it once.
     // That window is a few milliseconds per refresh and can't be closed from user space.
-    let (gpu, procs) = Nvml::open()?.read(&bus_id, window)?;
+    let lib = Nvml::library()?;
+    let Some((gpu, procs)) = Nvml::open(lib).and_then(|nvml| nvml.read(&bus_id, window)) else {
+        return Some(Nvidia::NotAnswering);
+    };
     Some(Nvidia::Awake(Gpu {
         apps: per_app(Path::new("/proc"), &procs),
         ..gpu
@@ -152,12 +157,15 @@ type ProcessList = unsafe extern "C" fn(Device, *mut c_uint, *mut ProcessInfo) -
 struct Nvml(&'static Library);
 
 impl Nvml {
-    fn open() -> Option<Self> {
+    /// The NVIDIA driver's NVML library, None without it (nouveau, or no driver).
+    fn library() -> Option<&'static Library> {
         // Loaded once and kept: the library alone holds no device open, only `nvmlInit` does.
         static LIB: OnceLock<Option<Library>> = OnceLock::new();
-        let lib = LIB
-            .get_or_init(|| unsafe { Library::new("libnvidia-ml.so.1") }.ok())
-            .as_ref()?;
+        LIB.get_or_init(|| unsafe { Library::new("libnvidia-ml.so.1") }.ok())
+            .as_ref()
+    }
+
+    fn open(lib: &'static Library) -> Option<Self> {
         let nvml = Nvml(lib);
         let init: unsafe extern "C" fn() -> Ret = nvml.sym(b"nvmlInit_v2\0")?;
         (unsafe { init() } == SUCCESS).then_some(nvml)

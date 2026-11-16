@@ -28,6 +28,8 @@ export struct Segment {
 export struct Bar {
     title: string,
     total: string,
+    // Inside an empty bar: why it is empty, e.g. "The NVIDIA driver is not answering".
+    note: string,
     segments: [Segment],
 }
 
@@ -109,6 +111,7 @@ component TipCard inherits Rectangle {
 
 component SegmentBar {
     in property <[Segment]> segments;
+    in property <string> note;
     in property <string> title;
     in property <length> gap: 2px;
     property <length> share: self.width - (self.segments.length - 1) * self.gap;
@@ -123,6 +126,11 @@ component SegmentBar {
     if root.segments.length == 0: Dashed {
         width: 100%;
         height: 100%;
+    }
+    if root.segments.length == 0 && root.note != "": Muted {
+        x: 10px;
+        text: root.note;
+        font-size: Theme.small;
     }
 
     for s[i] in root.segments: Rectangle {
@@ -236,6 +244,7 @@ component BarView {
         SegmentBar {
             title: root.bar.title + ", " + root.bar.total;
             segments: root.bar.segments;
+            note: root.bar.note;
         }
         // An empty FlexboxLayout limits the column's width to almost nothing.
         if root.bar.segments.length > 0: FlexboxLayout {
@@ -808,6 +817,8 @@ component SearchField inherits Rectangle {
 // Enter and Space) expand and fold apps; the model does the moving (`View::press`).
 component Table {
     in property <[Row]> rows;
+    // Memory can't be split by app here: a message instead of the rows.
+    in property <bool> unsplit;
     // The focused row, -1 for none.
     in property <int> current;
     callback pick(int);
@@ -964,9 +975,37 @@ component Table {
                 }
             }
         }
+        // A system that can't split memory by app: KDE's placeholder message for an empty view.
+        if root.unsplit: Rectangle {
+            vertical-stretch: 1;
+            background: Theme.picnic ? transparent : Theme.view;
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                padding-left: 60px;
+                padding-right: 60px;
+                Text {
+                    text: "SebWatch can't split memory by app on this system";
+                    color: Theme.muted;
+                    font-size: 18px;
+                    font-family: Theme.title-font;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                Muted {
+                    text: "It needs cgroup v2 memory accounting and the per-app groups a systemd user session creates; this system has neither. The bars above still show the totals.";
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
         // The rows are the scope's only accessible children, so the screen reader's focus follows
         // the focused row.
         scope := FocusScope {
+            visible: !root.unsplit;
+            // Hidden, it takes no room from the message.
+            min-height: 0;
+            max-height: root.unsplit ? 0 : 100000px;
             accessible-role: list;
             accessible-label: "Apps";
             accessible-item-count: root.rows.length;
@@ -1033,6 +1072,10 @@ export component MainWindow inherits Window {
     in property <Bar> vram;
     in property <[Tile]> tiles;
     in property <[Row]> rows;
+    // "Not updating: …" while readings fail, else empty.
+    in property <string> warning;
+    // Memory can't be split by app on this system.
+    in property <bool> unsplit;
     // The focused row, -1 for none.
     in property <int> current: -1;
     in property <int> sort-column;
@@ -1088,6 +1131,55 @@ export component MainWindow inherits Window {
         VerticalLayout {
             padding-top: 14px;
             spacing: Theme.picnic ? 22px : 14px;
+            // Readings failing: KDE's inline warning (KMessageWidget) above the bars.
+            if root.warning != "": HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                Rectangle {
+                    accessible-role: text;
+                    accessible-label: "Warning";
+                    accessible-description: root.warning;
+                    background: Theme.warning-bg;
+                    border-width: 1px;
+                    border-color: Theme.warning;
+                    border-radius: Theme.picnic ? 0 : 4px;
+                    HorizontalLayout {
+                        padding: 8px;
+                        padding-left: 10px;
+                        spacing: 9px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 18px;
+                                height: 18px;
+                                Path {
+                                    width: 18px;
+                                    height: 18px;
+                                    viewbox-width: 18;
+                                    viewbox-height: 18;
+                                    commands: "M 9 1.5 L 17 16 L 1 16 Z";
+                                    fill: Theme.warning;
+                                }
+                                Text {
+                                    y: 4px;
+                                    height: 12px;
+                                    text: "!";
+                                    color: #ffffff;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        Label {
+                            text: root.warning;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+            }
             HorizontalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
@@ -1145,6 +1237,7 @@ export component MainWindow inherits Window {
                         padding-right: Theme.picnic ? 3px : 0;
                         table := Table {
                             rows: root.rows;
+                            unsplit: root.unsplit;
                             current: root.current;
                             sort-column: root.sort-column;
                             sort-ascending: root.sort-ascending;

@@ -66,3 +66,50 @@ fn fixture_sums_exactly_to_mem_total() {
     );
     assert_eq!(m.pressure_avg10, 1.92);
 }
+
+#[test]
+fn splits_by_app_needs_the_memory_controller_and_a_user_session() {
+    use sebwatch_core::memory::splits_by_app;
+    let root = std::env::temp_dir().join(format!("sebwatch-split-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let session = root.join("user.slice/user-1000.slice/user@1000.service/app.slice");
+    std::fs::create_dir_all(&session).unwrap();
+    let controls = root.join("cgroup.subtree_control");
+
+    std::fs::write(&controls, "cpu io memory pids\n").unwrap();
+    assert!(splits_by_app(&root));
+    // No memory accounting below the root (or no cgroup v2 at all).
+    std::fs::write(&controls, "cpu io pids\n").unwrap();
+    assert!(!splits_by_app(&root));
+    std::fs::remove_file(&controls).unwrap();
+    assert!(!splits_by_app(&root));
+    // No systemd user session: no per-app groups.
+    std::fs::write(&controls, "memory\n").unwrap();
+    std::fs::remove_dir_all(root.join("user.slice/user-1000.slice")).unwrap();
+    assert!(!splits_by_app(&root));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn totals_come_from_meminfo_and_errors_name_the_file() {
+    use sebwatch_core::memory::totals;
+    let dir = std::env::temp_dir().join(format!("sebwatch-totals-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("meminfo"),
+        "MemTotal: 100 kB\nMemFree: 10 kB\nActive(file): 20 kB\nInactive(file): 5 kB\nZswap: 1 kB\n",
+    )
+    .unwrap();
+    let t = totals(&dir).unwrap();
+    assert_eq!(
+        (t.total, t.free, t.file_cache, t.zswap_pool),
+        (100 * 1024, 10 * 1024, 25 * 1024, 1024)
+    );
+    std::fs::remove_file(dir.join("meminfo")).unwrap();
+    let error = read(&dir, &dir).unwrap_err().to_string();
+    assert!(
+        error.starts_with("cannot read ") && error.contains("meminfo"),
+        "{error}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

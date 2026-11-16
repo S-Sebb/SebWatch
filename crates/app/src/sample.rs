@@ -36,7 +36,7 @@ fn app(
         swap,
         file_cache: cache,
         cpu,
-        disk_per_s: disk,
+        disk_per_s: Some(disk),
         gpu_percent: None,
         vram: None,
         parts: Vec::new(),
@@ -302,13 +302,15 @@ pub fn snapshot() -> Snapshot {
         free,
         apps,
         closed,
-        cpu_used: 2.6,
+        cpu_used: Some(2.6),
         cpu_cores: 16,
         nvidia_percent: Some(0.0),
         intel_percent: Some(3.0),
         vram: Some((b(0.3, G), b(8.0, G))),
         gpu_asleep: false,
-        disk_per_s: b(9.0, M),
+        nvidia_unavailable: false,
+        disk_per_s: Some(b(9.0, M)),
+        unsplit: None,
     }
 }
 
@@ -349,6 +351,39 @@ pub fn asleep() -> Snapshot {
     s
 }
 
+/// The same reading with the NVIDIA driver not answering and no `io.stat` (the io controller
+/// off): GPU, VRAM and disk figures unavailable.
+pub fn unavailable() -> Snapshot {
+    let mut s = snapshot();
+    s.nvidia_percent = None;
+    s.vram = None;
+    s.nvidia_unavailable = true;
+    s.disk_per_s = None;
+    for app in &mut s.apps {
+        app.gpu_percent = None;
+        app.vram = None;
+        app.disk_per_s = None;
+        for part in &mut app.parts {
+            part.disk_per_s = None;
+        }
+    }
+    s
+}
+
+/// The same machine without cgroup v2 memory accounting or a systemd user session: totals only.
+pub fn unsplit() -> Snapshot {
+    let s = snapshot();
+    let used: u64 = s.ram_total - s.free - s.file_cache - s.zswap_pool;
+    let swap_used = s.apps.iter().map(|a| a.swap).sum::<u64>() + s.closed.swap;
+    Snapshot {
+        kernel: used,
+        apps: Vec::new(),
+        closed: Default::default(),
+        unsplit: Some(crate::model::Unsplit { swap_used }),
+        ..s
+    }
+}
+
 /// A minute of readings at 2 s ending in `last`: CPU with a short burst, the GPU near idle, VRAM
 /// steady, disk with two spikes (the tiles' graphs, mockup T3).
 pub fn minute(last: fn() -> Snapshot, start: Instant) -> Vec<Snapshot> {
@@ -366,7 +401,7 @@ pub fn minute(last: fn() -> Snapshot, start: Instant) -> Vec<Snapshot> {
                     22 => 37.0,
                     _ => wave(15.0, 6.0, 0.0, i),
                 };
-                s.cpu_used = cpu / 100.0 * s.cpu_cores as f32;
+                s.cpu_used = Some(cpu / 100.0 * s.cpu_cores as f32);
                 if !s.gpu_asleep {
                     s.nvidia_percent = s.nvidia_percent.map(|_| wave(2.0, 2.0, 3.0, i));
                 }
@@ -374,7 +409,7 @@ pub fn minute(last: fn() -> Snapshot, start: Instant) -> Vec<Snapshot> {
                     8 => 12.0,
                     _ => wave(2.0, 2.0, 1.0, i),
                 };
-                s.disk_per_s = b(disk as f64, M);
+                s.disk_per_s = Some(b(disk as f64, M));
             }
             s
         })
