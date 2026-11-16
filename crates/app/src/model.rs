@@ -39,7 +39,6 @@ pub struct Snapshot {
     pub cpu_used: Option<f32>,
     pub cpu_cores: u32,
     pub nvidia_percent: Option<f32>,
-    pub intel_percent: Option<f32>,
     /// Used and total VRAM of the NVIDIA GPU, if it is awake.
     pub vram: Option<(u64, u64)>,
     /// The NVIDIA GPU sleeps: no VRAM figures, as reading them would wake it.
@@ -1164,12 +1163,8 @@ fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
     }];
     // A sleeping or silent GPU keeps its tiles, saying so in place of the figures and graphs not
     // read (no value: the words need the tile's width).
-    let intel = |unit: &str| match s.intel_percent {
-        Some(intel) => format!("{unit} · {} Intel", percent(intel)),
-        None => unit.into(),
-    };
     if s.nvidia_unavailable {
-        tiles.push(tile("GPU", String::new(), intel(UNAVAILABLE), None));
+        tiles.push(unavailable("GPU"));
         tiles.push(unavailable("VRAM"));
     } else {
         if let Some(nvidia) = s.nvidia_percent {
@@ -1179,7 +1174,7 @@ fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
                 (percent(nvidia), "NVIDIA")
             };
             let graph = (!s.gpu_asleep).then_some((history, Measure::Gpu));
-            tiles.push(tile("GPU", value, intel(unit), graph));
+            tiles.push(tile("GPU", value, unit.into(), graph));
         }
         if let Some((used, total)) = s.vram {
             tiles.push(tile(
@@ -1318,7 +1313,7 @@ mod tests {
             .iter()
             .map(|t| (t.name.as_str(), t.value.as_str(), t.unit.as_str()))
             .collect();
-        assert!(tiles.contains(&("GPU", "", "NVIDIA asleep · 3% Intel")));
+        assert!(tiles.contains(&("GPU", "", "NVIDIA asleep")));
         assert!(tiles.contains(&("VRAM", "", "GPU asleep")));
         // Their graphs go; CPU and Disk keep theirs.
         let graphed: Vec<_> = asleep.tiles.iter().map(|t| t.graphed).collect();
@@ -1743,7 +1738,7 @@ mod tests {
             tiles,
             [
                 t("CPU", "unavailable"),
-                t("GPU", "unavailable · 3% Intel"),
+                t("GPU", "unavailable"),
                 t("VRAM", "unavailable"),
                 t("Disk", "unavailable"),
             ]

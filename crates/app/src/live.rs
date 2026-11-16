@@ -223,7 +223,6 @@ impl Reader {
                 Some(g) => Some(g.utilization_percent.unwrap_or(0) as f32),
                 None => asleep.then_some(0.0),
             },
-            intel_percent: None,
             vram: gpu
                 .as_ref()
                 .map(|g| (g.vram_used_bytes, g.vram_total_bytes)),
@@ -263,7 +262,6 @@ impl Reader {
                 Some(g) => Some(g.utilization_percent.unwrap_or(0) as f32),
                 None => asleep.then_some(0.0),
             },
-            intel_percent: None,
             vram: gpu
                 .as_ref()
                 .map(|g| (g.vram_used_bytes, g.vram_total_bytes)),

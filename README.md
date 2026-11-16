@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: RAM, swap and VRAM bars split by app, CPU, GPU, VRAM and disk tiles, and the app table with the Android emulator expanded into its processes" />
+  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: RAM, swap and VRAM bars split by app, CPU, GPU, VRAM and disk tiles with their last minute as a graph, and the app table with the Android emulator expanded into its processes" />
   <br /><sub>Breeze Light, with the Android emulator expanded into its processes</sub>
 </p>
 
