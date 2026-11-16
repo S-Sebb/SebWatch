@@ -50,6 +50,11 @@ Top to bottom:
    the value large, its unit below, and the last minute as a line with a light fill along the
    tile's bottom, under the words (tile style T3, #52).
 
+**Small windows** (#36). The window is at least 760 × 480 and remembers its size in the
+settings file (not when maximised or full screen). A narrow window keeps the name column at
+220 px and scrolls the table sideways, header and rows together. A short one keeps about 8
+table rows and scrolls the whole page instead.
+
 It refreshes every 2 s while visible and does nothing while minimised or hidden.
 Readings that fail say so rather than showing 0: "unavailable" in a tile, "n/a" in a table
 cell, and a KDE-style inline warning above the bars when the figures stop updating, giving the
