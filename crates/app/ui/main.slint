@@ -991,6 +991,8 @@ component RowView inherits Rectangle {
                     font-size: root.small;
                     overflow: elide;
                     min-width: 0;
+                    // A lone "…" after an elided name says nothing.
+                    visible: self.width >= 24px;
                 }
             }
         }
