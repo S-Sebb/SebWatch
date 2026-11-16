@@ -315,3 +315,100 @@ fn mockups() {
     save(&shot, "closed-light");
     ui.hide().unwrap();
 }
+
+/// Variant P (pies instead of bars, figures instead of tiles) and the new leftover row.
+#[test]
+#[ignore = "writes PNG files"]
+fn pies() {
+    use crate::sample::mock;
+    let dir = std::path::PathBuf::from(std::env::var("SEBWATCH_SHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    let now = Rc::new(Cell::new(Duration::ZERO));
+    slint::platform::set_platform(Box::new(Offscreen {
+        window: window.clone(),
+        now: now.clone(),
+    }))
+    .unwrap();
+    let open = |choice, width, height, pies: bool, shown: crate::model::Shown| {
+        let ui = MainWindow::new().unwrap();
+        ui.global::<Theme>().set_choice(choice);
+        ui.set_pies(pies);
+        crate::setup(&ui, mock::snapshot(), |_| {});
+        crate::show(&ui, if pies { mock::pies(shown) } else { shown });
+        ui.show().unwrap();
+        window.set_size(PhysicalSize::new(width, height));
+        let shot = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width,
+            height,
+        };
+        (ui, shot)
+    };
+    let save =
+        |shot: &Shot, name: &str| shot.save(&shot.render(), &dir.join(format!("{name}.png")));
+
+    for (choice, name, height) in [
+        (ThemeChoice::Light, "light", 844),
+        (ThemeChoice::Dark, "dark", 844),
+        (ThemeChoice::Sebchat, "sebchat", 1024),
+    ] {
+        let (ui, shot) = open(
+            choice,
+            1000,
+            height,
+            true,
+            mock::shown(mock::snapshot, 0, &["Android emulator"]),
+        );
+        ui.set_selected("Android emulator".into());
+        let android = ui.global::<Theme>().get_series().row_data(1).unwrap();
+        // The middle of the memory donut's slice: the centroid of its colour left of x = 320,
+        // above the legend.
+        let pixels = shot.render();
+        let hits: Vec<(u32, u32)> = pixels
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| (p.r, p.g, p.b) == (android.red(), android.green(), android.blue()))
+            .map(|(i, _)| (i as u32 % shot.width, i as u32 / shot.width))
+            .filter(|&(x, _)| x < 320)
+            .collect();
+        let top = hits[0].1;
+        let slice: Vec<_> = hits.into_iter().filter(|&(_, y)| y < top + 110).collect();
+        let n = slice.len() as f32;
+        let x = slice.iter().map(|p| p.0 as f32).sum::<f32>() / n;
+        let y = slice.iter().map(|p| p.1 as f32).sum::<f32>() / n;
+        shot.pointer(x, y, false);
+        shot.wait(Duration::from_millis(800));
+        save(&shot, &format!("p-main-{name}"));
+        ui.hide().unwrap();
+    }
+    let light = ThemeChoice::Light;
+    let (ui, shot) = open(light, 1000, 844, true, mock::shown(mock::asleep, 0, &[]));
+    save(&shot, "p-asleep-light");
+    ui.hide().unwrap();
+    for (name, width, height) in [("narrow", 760, 844), ("short", 1000, 480)] {
+        let (ui, shot) = open(
+            light,
+            width,
+            height,
+            true,
+            mock::shown(mock::snapshot, 0, &[]),
+        );
+        save(&shot, &format!("p-{name}-light"));
+        ui.hide().unwrap();
+    }
+    // The approved bars with the new leftover wording, its row focused with the explanation.
+    let (ui, shot) = open(
+        light,
+        1000,
+        844,
+        false,
+        mock::shown(mock::snapshot, 0, &["Android emulator"]),
+    );
+    ui.set_selected("Android emulator".into());
+    ui.set_focus_row(6);
+    ui.set_row_tip(mock::UNREADABLE.into());
+    save(&shot, "leftover-light");
+    ui.hide().unwrap();
+}

@@ -543,8 +543,8 @@ pub mod mock {
                 row.series = colour(&row.name);
             }
             if row.kind == RowKind::Kernel {
-                row.name = "Memory not attributed to processes".into();
-                row.detail = "· incl. adb, unreadable".into();
+                row.name = "Not attributed to processes".into();
+                row.detail = "· 1 unreadable".into();
             }
             rows.push(row);
         }
@@ -745,4 +745,19 @@ pub mod mock {
         });
         shown
     }
+
+    /// The sample with the NVIDIA GPU asleep, closed apps taken out as in `snapshot`.
+    pub fn asleep() -> Snapshot {
+        let mut s = super::asleep();
+        s.kernel -= closed();
+        s
+    }
+
+    /// Variant P: no VRAM tile, the VRAM donut shows it.
+    pub fn pies(mut shown: Shown) -> Shown {
+        shown.tiles.retain(|t| t.name != "VRAM");
+        shown
+    }
+
+    pub const UNREADABLE: &str = "Memory charged to Android emulator but to none of its processes it could read: kernel memory and zswap for the app, and adb (4130302), which runs as another user so SebWatch may not read it.";
 }

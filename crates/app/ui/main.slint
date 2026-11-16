@@ -244,6 +244,213 @@ component BarView {
     }
 }
 
+// Variant P: the hovered donut slice, drawn by the window above everything else.
+global Hover {
+    in-out property <bool> on;
+    in-out property <Segment> segment;
+    in-out property <length> x;
+    in-out property <length> y;
+}
+
+component TipCard inherits Rectangle {
+    in property <Segment> s;
+    background: Theme.popup;
+    border-width: 1px;
+    border-color: Theme.picnic ? Theme.outline : Theme.line;
+    border-radius: Theme.picnic ? 0 : 4px;
+    drop-shadow-blur: Theme.picnic ? 0 : 10px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-offset-x: Theme.picnic ? 3px : 0;
+    drop-shadow-color: Theme.picnic ? #5B331C30 : #00000040;
+    VerticalLayout {
+        padding-left: Theme.picnic ? 10px : 9px;
+        padding-right: self.padding-left;
+        padding-top: Theme.picnic ? 8px : 6px;
+        padding-bottom: self.padding-top;
+        spacing: 2px;
+        HorizontalLayout {
+            spacing: 6px;
+            VerticalLayout {
+                alignment: center;
+                Swatch {
+                    kind: root.s.kind;
+                    series: root.s.series;
+                }
+            }
+            Label {
+                text: root.s.detail == "" ? root.s.name : root.s.name + " " + root.s.detail;
+                font-size: Theme.small;
+                font-weight: Theme.picnic ? 800 : 700;
+            }
+        }
+        Label {
+            text: root.s.tip;
+            font-size: Theme.small;
+        }
+        for note in root.s.notes: Muted {
+            text: note;
+            font-size: Theme.small;
+        }
+    }
+}
+
+// Variant P: a bar drawn as a donut, slices clockwise from the top in the bar's order.
+component Donut {
+    in property <Bar> bar;
+    in property <string> note;
+    // Outer and inner radius in a 200-unit box.
+    property <float> R: 100;
+    property <float> r: 62;
+    property <float> gap: 1.4;
+    property <length> size: min(self.width, 164px);
+
+    pure function ox(a: float, rad: float) -> float {
+        return 100 + rad * Math.sin(a * 1deg);
+    }
+    pure function oy(a: float, rad: float) -> float {
+        return 100 - rad * Math.cos(a * 1deg);
+    }
+    pure function slice(a0: float, a1: float) -> string {
+        let large = a1 - a0 > 180 ? "1" : "0";
+        return "M " + ox(a0, R) + " " + oy(a0, R) + " A " + R + " " + R + " 0 " + large + " 1 " + ox(a1, R) + " " + oy(a1, R)
+            + " L " + ox(a1, r) + " " + oy(a1, r) + " A " + r + " " + r + " 0 " + large + " 0 " + ox(a0, r) + " " + oy(a0, r) + " Z";
+    }
+    pure function hit(start: float, fraction: float) -> bool {
+        if !touch.has-hover {
+            return false;
+        }
+        let dx = touch.mouse-x / ring.width * 200 - 100;
+        let dy = touch.mouse-y / ring.height * 200 - 100;
+        let d = Math.sqrt(dx * dx + dy * dy);
+        if d < root.r || d > root.R {
+            return false;
+        }
+        let a = Math.atan2(dx, -dy) / 1deg;
+        let f = (a < 0 ? a + 360 : a) / 360;
+        return f >= start && f < start + fraction;
+    }
+
+    VerticalLayout {
+        spacing: 8px;
+        alignment: start;
+        HorizontalLayout {
+            SectionTitle {
+                text: root.bar.title;
+            }
+            Muted {
+                text: root.bar.total;
+                horizontal-alignment: right;
+                vertical-alignment: bottom;
+            }
+        }
+        Rectangle {
+            height: root.size;
+            ring := Rectangle {
+                x: (parent.width - self.width) / 2;
+                width: root.size;
+                height: root.size;
+                // A sleeping GPU: an empty outlined ring, its reason in the middle.
+                if root.bar.segments.length == 0: Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: 200;
+                    viewbox-height: 200;
+                    commands: "M 100 0.5 A 99.5 99.5 0 1 1 99.99 0.5 Z M 100 38.5 A 61.5 61.5 0 1 0 100.01 38.5 Z";
+                    stroke: Theme.muted;
+                    stroke-width: Theme.picnic ? 2px : 1px;
+                }
+                if root.bar.segments.length == 0: Muted {
+                    width: 100%;
+                    height: 100%;
+                    horizontal-alignment: center;
+                    text: root.note != "" ? root.note : root.bar.total;
+                    font-size: Theme.small;
+                }
+                for s in root.bar.segments: Rectangle {
+                    property <float> a0: s.start * 360 + root.gap / 2;
+                    property <float> a1: max(a0 + 0.8, (s.start + s.fraction) * 360 - root.gap / 2);
+                    property <bool> hovered: root.hit(s.start, s.fraction);
+                    changed hovered => {
+                        if self.hovered {
+                            Hover.segment = s;
+                            Hover.x = touch.absolute-position.x + touch.mouse-x;
+                            Hover.y = touch.absolute-position.y + touch.mouse-y;
+                            Hover.on = true;
+                        } else if Hover.segment.name == s.name {
+                            Hover.on = false;
+                        }
+                    }
+                    Path {
+                        width: 100%;
+                        height: 100%;
+                        viewbox-width: 200;
+                        viewbox-height: 200;
+                        commands: root.slice(parent.a0, parent.a1);
+                        fill: SegmentFill.color(s.kind, s.series);
+                        stroke: parent.hovered ? Theme.fg : s.kind == SegmentKind.free ? Theme.muted : transparent;
+                        stroke-width: parent.hovered ? 2px : Theme.picnic ? 2px : 1px;
+                    }
+                    // Freeable memory hatched, as in the bars: short strokes across the ring.
+                    property <float> step: 5;
+                    for j in (s.kind == SegmentKind.cache || s.kind == SegmentKind.closed) ? Math.min(72, Math.floor((self.a1 - self.a0) / self.step)) : 0: Path {
+                        width: 100%;
+                        height: 100%;
+                        viewbox-width: 200;
+                        viewbox-height: 200;
+                        property <float> a: parent.a0 + (j + 0.5) * parent.step;
+                        commands: "M " + root.ox(self.a - 3, root.r + 2) + " " + root.oy(self.a - 3, root.r + 2) + " L " + root.ox(self.a + 3, root.R - 2) + " " + root.oy(self.a + 3, root.R - 2);
+                        stroke: Theme.hatch;
+                        stroke-width: 1px;
+                    }
+                }
+            }
+            touch := TouchArea {
+                x: ring.x;
+                width: ring.width;
+            }
+        }
+        FlexboxLayout {
+            spacing-horizontal: 12px;
+            spacing-vertical: 4px;
+            for s in root.bar.segments: HorizontalLayout {
+                spacing: 5px;
+                VerticalLayout {
+                    alignment: center;
+                    Swatch {
+                        kind: s.kind;
+                        series: s.series;
+                    }
+                }
+                Label {
+                    text: s.name + "  " + s.size;
+                    font-size: Theme.small;
+                }
+            }
+        }
+    }
+}
+
+// Variant P: a headline figure without a meter, e.g. "CPU 2.6 of 16 cores".
+component Figure {
+    in property <Tile> tile;
+    HorizontalLayout {
+        spacing: 6px;
+        Muted {
+            text: root.tile.name;
+            font-weight: Theme.picnic ? 800 : 400;
+        }
+        if root.tile.value != "": Label {
+            text: root.tile.value;
+            font-family: Theme.picnic ? "Jersey 10" : "";
+            font-size: Theme.picnic ? 24px : 16px;
+        }
+        Muted {
+            text: root.tile.unit;
+            font-size: Theme.small;
+        }
+    }
+}
+
 component TileView inherits Card {
     in property <Tile> tile;
     inset: 12px;
@@ -617,6 +824,8 @@ component Table {
     // #38: shown instead of the rows when there are no apps to show.
     in property <string> placeholder-title;
     in property <string> placeholder-text;
+    // The focused or hovered row's explanation (the leftover row's unreadable processes).
+    in property <string> row-tip;
     callback toggle(string);
     property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", "GPU", "VRAM"];
     // #36: the name column keeps 220 px; a narrower window scrolls the table sideways.
@@ -777,6 +986,27 @@ component Table {
             }
         }
     }
+    if root.row-tip != "" && root.focus-index >= 0: Rectangle {
+        x: 90px;
+        y: scroll.y + scroll.content-y + (root.focus-index + 1) * (Theme.picnic ? 31px : 28px) + 2px;
+        width: 420px;
+        height: tip.preferred-height;
+        background: Theme.popup;
+        border-width: 1px;
+        border-color: Theme.picnic ? Theme.outline : Theme.line;
+        border-radius: Theme.picnic ? 0 : 4px;
+        drop-shadow-blur: Theme.picnic ? 0 : 10px;
+        drop-shadow-offset-y: 3px;
+        drop-shadow-color: #00000040;
+        tip := VerticalLayout {
+            padding: 9px;
+            Label {
+                text: root.row-tip;
+                font-size: Theme.small;
+                wrap: word-wrap;
+            }
+        }
+    }
 }
 
 export component MainWindow inherits Window {
@@ -803,6 +1033,11 @@ export component MainWindow inherits Window {
     in property <string> message;
     in property <string> placeholder-title;
     in property <string> placeholder-text;
+    // Variant P: donuts instead of bars, figures instead of tiles.
+    in property <bool> pies;
+    // Three equal columns, whatever their legends hold.
+    property <length> pie-width: (root.width - 32px - 2 * (Theme.picnic ? 22px : 28px) - (Theme.picnic ? 28px : 0)) / 3;
+    in property <string> row-tip;
 
     in property <string> version;
 
@@ -880,7 +1115,63 @@ export component MainWindow inherits Window {
                 }
             }
         }
-        HorizontalLayout {
+        if root.pies: VerticalLayout {
+            // Inside an `if`, the layout would get only its minimum: the legends' wrapped lines.
+            min-height: self.preferred-height;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: Theme.picnic ? 18px : 14px;
+            vertical-stretch: 0;
+            HorizontalLayout {
+                spacing: 16px;
+                Card {
+                    inset: 10px;
+                    HorizontalLayout {
+                        spacing: 28px;
+                        alignment: start;
+                        for t in root.tiles: VerticalLayout {
+                            alignment: center;
+                            Figure {
+                                tile: t;
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    MenuButton {
+                        focus-index: root.menu-focus;
+                        chosen(choice) => {
+                            root.theme-chosen(choice);
+                        }
+                    }
+                }
+            }
+            Card {
+                HorizontalLayout {
+                    spacing: Theme.picnic ? 22px : 28px;
+                    Donut {
+                        width: root.pie-width;
+                        bar: root.memory;
+                    }
+                    Donut {
+                        width: root.pie-width;
+                        bar: root.swap;
+                    }
+                    if root.has-vram: Donut {
+                        width: root.pie-width;
+                        bar: root.vram;
+                        note: root.vram-note;
+                    }
+                }
+            }
+        }
+        if !root.pies: HorizontalLayout {
+            // Inside an `if`, the layout would get only its minimum: the legends' wrapped lines.
+            min-height: self.preferred-height;
             padding-left: 16px;
             padding-right: 16px;
             spacing: Theme.picnic ? 22px : 16px;
@@ -947,6 +1238,7 @@ export component MainWindow inherits Window {
                         filter-note: root.filter-note;
                         placeholder-title: root.placeholder-title;
                         placeholder-text: root.placeholder-text;
+                        row-tip: root.row-tip;
                         selected <=> root.selected;
                         toggle(key) => {
                             root.toggle(key);
@@ -956,5 +1248,13 @@ export component MainWindow inherits Window {
             }
         }
     }
+    }
+
+    if root.pies && Hover.on: TipCard {
+        s: Hover.segment;
+        width: self.preferred-width;
+        height: self.preferred-height;
+        x: Math.min(Hover.x + 12px, root.width - self.preferred-width - 8px);
+        y: Hover.y + 18px;
     }
 }
