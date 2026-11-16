@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # What a screen reader sees: runs the app on a headless KWin (`--virtual`) with its own D-Bus
 # session and accessibility bus, so nothing shows on the desktop, and reads its AT-SPI tree.
-# Checks the tiles and column headers say what they measure, clicks the second row through AT-SPI
-# and checks the focus lands on it and stays there across a refresh. One line per check; the tree in target/logs/a11y-tree.txt, other logs beside it.
+# Checks the tiles and column headers say what they measure, selects a row through AT-SPI and
+# checks the selection stays on it across a refresh, that the click doesn't expand it, that End
+# and Kill name it, that Kill asks first with Cancel focused (cancelled: nothing is ended or
+# killed), and that Pause turns into Resume with its strip. One line per check; the tree in
+# target/logs/a11y-tree.txt, other logs beside it.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -167,28 +170,82 @@ kept = sum(any(r["node"] == b for r in rows) for b in before)
 check("rows stay the same objects across a refresh", kept == min(len(before), len(rows)),
       f"{kept} of {len(before)} kept")
 
-# A click through AT-SPI expands the row and focuses it; the screen reader's focus is on it, not
-# on the list. The clicked row is the one expanded: a refresh may reorder rows or change a
-# name's detail.
-def focus_and_expanded():
+def buttons():
+    return {n["name"]: n for n in nodes if n["role"] == "button"}
+
+# A click through AT-SPI selects the row and gives it the screen reader's focus, without
+# expanding it. The first of this PC's apps that SebWatch may end (its own, not root's).
+picked = None
+def click(row):
+    """Clicks the row at this index, finding it again if a refresh replaced it."""
+    for _ in range(5):
+        try:
+            app_rows()[row]["node"].queryAction().doAction(0)
+            return
+        except (GLib.Error, NotImplementedError):
+            time.sleep(0.3)
+            dump()
+
+def press(name):
+    """Presses the button named so, finding it again if it was replaced."""
+    for _ in range(20):
+        try:
+            buttons()[name]["node"].queryAction().doAction(0)
+            return
+        except (GLib.Error, NotImplementedError, KeyError) as error:
+            out.write(f"press {name}: {error!r}\n")
+            time.sleep(0.5)
+            dump()
+    raise RuntimeError(f"cannot press {name}")
+
+for i in range(1, min(6, len(rows))):
+    click(i)
+    time.sleep(1)
     dump()
-    rows = app_rows()
-    return ([r["name"] for r in rows if "focused" in r["states"]],
-            [r["name"] for r in rows if r["description"].startswith("expanded, ")])
-# A failed click is a FAIL, not the end of the run.
-try:
-    rows[1]["node"].queryAction().doAction(0)
-except Exception as e:
-    print(f"FAIL row click through AT-SPI: {e!r}")
-    status = 1
-time.sleep(1)
-focused, expanded = focus_and_expanded()
-check("clicked row has the focus and is expanded", len(expanded) == 1 and focused == expanded,
-      f"focused {focused}, expanded {expanded}")
+    if any(name.startswith("End ") for name in buttons()):
+        picked = i
+        break
+rows = app_rows()
+check("a click selects without expanding", picked is not None and [r["name"] for r in rows if "focused" in r["states"]] == [rows[picked]["name"]]
+      and rows[picked]["description"].startswith("collapsed, "), f"picked {picked}")
+if picked is None:
+    sys.exit(1)
+name = rows[picked]["name"]
+ends = [b for b in buttons() if b.startswith("End ") or b.startswith("Kill ")]
+check("End and Kill name the selected app", len(ends) == 2 and all(name.startswith(b.split(" ", 1)[1]) for b in ends),
+      f"{ends} for {name!r}")
+# AT-SPI offers rows only "click"; expanding by the arrow and keys is checked in the model's tests.
 time.sleep(4.5)
-focused, expanded = focus_and_expanded()
-check("focus kept across refreshes", len(expanded) == 1 and focused == expanded,
-      f"focused {focused}, expanded {expanded}")
+dump()
+rows = app_rows()
+focused = [r["name"] for r in rows if "focused" in r["states"]]
+check("selection kept across refreshes", focused == [name], f"focused {focused}")
+
+# Kill asks first, Cancel focused; Cancel closes it. The dialog's own Kill is never pressed.
+kill = next(b for b in buttons() if b.startswith("Kill "))
+press(kill)
+time.sleep(1)
+dump()
+b = buttons()
+check("Kill asks first with Cancel focused", "Kill" in b and "Cancel" in b and "focused" in b["Cancel"]["states"],
+      f"buttons {sorted(b)}, Cancel {b.get('Cancel', {}).get('states')}")
+if "Cancel" in b:
+    press("Cancel")
+time.sleep(1)
+dump()
+b = buttons()
+check("Cancel closes it and the app runs on", "Cancel" not in b and name in [r["name"] for r in app_rows()], f"buttons {sorted(b)}")
+
+# Pause freezes the window: Resume, and the strip saying since when.
+press("Pause")
+time.sleep(1)
+dump()
+strip = [n["name"] for n in nodes if n["name"].startswith("Paused at ")]
+check("Pause turns into Resume with its strip", "Resume" in buttons() and len(set(strip)) == 1, f"buttons {sorted(buttons())}, strip {strip}")
+press("Resume")
+time.sleep(1)
+dump()
+check("Resume", "Pause" in buttons(), f"buttons {sorted(buttons())}")
 
 # The menu opened through AT-SPI: its items are radio buttons, the current theme checked.
 button[0]["node"].queryAction().doAction(0)

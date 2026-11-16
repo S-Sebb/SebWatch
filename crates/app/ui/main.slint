@@ -108,6 +108,8 @@ export struct Row {
     vram: string,
     // Shown on hover; empty for none.
     tip: string,
+    // Ended while the window is paused: greyed until it resumes.
+    ended: bool,
 }
 
 component Label inherits Text {
@@ -1012,6 +1014,260 @@ component MenuButton {
     }
 }
 
+// The icons of the buttons and strips: End's stop sign, Kill's red cross, Pause, Resume, and the
+// strips' info and warning signs.
+enum Glyph { none, end, kill, pause, play, info, warn }
+
+component GlyphIcon {
+    in property <Glyph> glyph;
+    in property <length> size: 16px;
+    width: self.glyph == Glyph.none ? 0 : self.size;
+    height: self.size;
+    if root.glyph == Glyph.end: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 8 2 A 6 6 0 1 1 8 14 A 6 6 0 1 1 8 2 M 5.5 8 L 10.5 8";
+        stroke: Theme.fg;
+        stroke-width: Theme.picnic ? 1.6px : 1.2px;
+    }
+    if root.glyph == Glyph.kill || root.glyph == Glyph.info: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 8 1.5 A 6.5 6.5 0 1 1 8 14.5 A 6.5 6.5 0 1 1 8 1.5 Z";
+        fill: root.glyph == Glyph.kill ? Theme.negative : Theme.accent;
+    }
+    if root.glyph == Glyph.kill: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 5.5 5.5 L 10.5 10.5 M 10.5 5.5 L 5.5 10.5";
+        stroke: #ffffff;
+        stroke-width: 1.6px;
+    }
+    if root.glyph == Glyph.info: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 8 7 L 8 12 M 8 4 L 8 5.6";
+        stroke: #ffffff;
+        stroke-width: 1.6px;
+    }
+    if root.glyph == Glyph.warn: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 32;
+        viewbox-height: 32;
+        commands: "M 16 3 L 30 28 L 2 28 Z";
+        fill: Theme.warning;
+    }
+    if root.glyph == Glyph.warn: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 32;
+        viewbox-height: 32;
+        commands: "M 16 11 L 16 20 M 16 22 L 16 24.4";
+        stroke: #ffffff;
+        stroke-width: 2.4px;
+    }
+    if root.glyph == Glyph.pause: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 4 3 L 6.5 3 L 6.5 13 L 4 13 Z M 9.5 3 L 12 3 L 12 13 L 9.5 13 Z";
+        fill: Theme.fg;
+    }
+    if root.glyph == Glyph.play: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 5 3 L 13 8 L 5 13 Z";
+        fill: Theme.fg;
+    }
+}
+
+// A push button: Breeze's framed face, or SebChat's outlined one with a hard shadow. A long
+// label ends in an ellipsis; Enter or Space presses it from the keyboard.
+component PushButton {
+    in property <string> text;
+    in property <Glyph> glyph;
+    // Pressed in: Resume while the window is paused.
+    in property <bool> on;
+    in property <bool> danger;
+    // The tooltip: a first line, then muted lines; none when empty.
+    in property <string> tip;
+    in property <[string]> notes;
+    callback clicked();
+    // Focus frames only after a key, as in KDE apps.
+    property <bool> keyboard;
+    height: Theme.picnic ? 30px : 28px;
+    // As wide as its label; narrower only to fit, never wider.
+    horizontal-stretch: 0;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.notes.length > 0 ? root.notes[0] : "";
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    public function focus-button() {
+        root.keyboard = true;
+        scope.focus();
+    }
+
+    if Theme.picnic: Rectangle {
+        x: 2px;
+        y: 2px;
+        background: #5B331C30;
+    }
+    Rectangle {
+        background: root.danger ? Theme.negative : root.on ? Theme.selection : touch.has-hover ? Theme.hover : Theme.button;
+        border-width: Theme.picnic ? 2px : 1px;
+        border-radius: Theme.picnic ? 0 : 3px;
+        border-color: root.danger ? (Theme.picnic ? Theme.outline : Theme.negative) : root.on || touch.has-hover ? Theme.accent : Theme.button-line;
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        if root.glyph != Glyph.none: VerticalLayout {
+            alignment: center;
+            GlyphIcon {
+                glyph: root.glyph;
+            }
+        }
+        Label {
+            text: root.text;
+            overflow: elide;
+            color: root.danger ? #ffffff : Theme.fg;
+            font-weight: Theme.picnic ? 800 : Theme.weight;
+        }
+    }
+    if scope.has-focus && root.keyboard: FocusRing {
+        width: 100%;
+        height: 100%;
+    }
+    touch := TouchArea {
+        clicked => {
+            root.keyboard = false;
+            root.clicked();
+        }
+    }
+    scope := FocusScope {
+        focus-gained(reason) => {
+            root.keyboard = reason == FocusReason.tab-navigation || root.keyboard;
+        }
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+    if root.tip != "": Rectangle {
+        Tooltip {
+            TipCard {
+                Label {
+                    text: root.tip;
+                    font-size: Theme.small;
+                    font-weight: Theme.picnic ? 800 : 700;
+                }
+                for note in root.notes: Muted {
+                    text: note;
+                    font-size: Theme.small;
+                }
+            }
+        }
+    }
+}
+
+// A line above the rows, as KDE's inline messages: paused, End's news, or a failure.
+component Strip inherits Rectangle {
+    in property <string> message;
+    in property <Glyph> glyph;
+    in property <color> tone;
+    border-width: Theme.picnic ? 2px : 1px;
+    border-radius: Theme.picnic ? 0 : 4px;
+    border-color: root.tone;
+    accessible-role: text;
+    accessible-label: root.message;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 4px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            GlyphIcon {
+                glyph: root.glyph;
+            }
+        }
+        Label {
+            min-height: 26px;
+            text: root.message;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+        @children
+    }
+}
+
+// An item of the row's menu: its icon, its words and its key.
+component MenuItem inherits Rectangle {
+    in property <Glyph> glyph;
+    in property <string> text;
+    in property <string> keys;
+    in property <bool> current;
+    callback clicked();
+    height: 28px;
+    border-radius: Theme.picnic ? 0 : 3px;
+    background: self.current || touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.keys;
+    accessible-action-default => {
+        root.clicked();
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            GlyphIcon {
+                glyph: root.glyph;
+            }
+        }
+        Label {
+            text: root.text;
+            overflow: elide;
+            max-width: 360px;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 24px;
+        }
+        Muted {
+            text: root.keys;
+            font-size: Theme.small;
+        }
+    }
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 // Table column widths after the stretching name column.
 // With an Intel or AMD GPU (`igpu` names it) the GPU column becomes two, that GPU's and NVIDIA's.
 export global Columns {
@@ -1119,6 +1375,9 @@ component RowView inherits Rectangle {
     in property <bool> selected;
     in property <bool> focused;
     callback clicked();
+    callback expand-clicked();
+    // A right click, at the pointer in window coordinates.
+    callback menu(length, length);
     property <bool> top: self.entry.kind == RowKind.app || self.entry.kind == RowKind.more;
     property <length> small: Theme.picnic && !self.top ? Theme.small : Theme.font-size;
     property <color> muted: self.selected ? Theme.selected-muted : Theme.muted;
@@ -1131,6 +1390,7 @@ component RowView inherits Rectangle {
     // The name column with the row's left padding; the values and the right padding take the rest.
     property <length> name-width: self.width - Columns.total - 8px;
     height: self.show-tip ? self.line + tip.preferred-height + 6px : self.line;
+    opacity: self.entry.ended ? 0.55 : 1;
     background: self.selected ? Theme.selection : Math.mod(self.index, 2) == 1 && !Theme.picnic ? Theme.alt : transparent;
     accessible-role: list-item;
     accessible-label: self.entry.detail == "" ? self.entry.name : self.entry.name + " " + self.entry.detail;
@@ -1145,9 +1405,10 @@ component RowView inherits Rectangle {
     accessible-action-default => {
         self.clicked();
     }
+    // Expands or folds it.
     accessible-action-expand => {
         if self.top {
-            self.clicked();
+            self.expand-clicked();
         }
     }
 
@@ -1220,6 +1481,18 @@ component RowView inherits Rectangle {
         clip: true;
         if root.pin > 0: Rectangle {
             background: root.background;
+        }
+        // The arrow under the pointer, which is what expands the row.
+        Rectangle {
+            x: 6px;
+            y: (root.line - self.height) / 2;
+            width: 20px;
+            height: 20px;
+            border-radius: Theme.picnic ? 0 : 3px;
+            visible: root.top && arrow.has-hover;
+            background: Theme.hover;
+            border-width: 1px;
+            border-color: Theme.accent;
         }
         HorizontalLayout {
             spacing: 6px;
@@ -1300,6 +1573,22 @@ component RowView inherits Rectangle {
     TouchArea {
         clicked => {
             root.clicked();
+        }
+        pointer-event(event) => {
+            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    arrow := TouchArea {
+        x: root.pin + 4px;
+        width: root.top ? 24px : 0;
+        height: root.line;
+        y: 0;
+        enabled: root.top;
+        mouse-cursor: pointer;
+        clicked => {
+            root.expand-clicked();
         }
     }
 
@@ -1456,16 +1745,34 @@ component NameEdge {
     }
 }
 
-// The app table. Up and Down move the focus, Home and End go to the ends, Right and Left (or
-// Enter and Space) expand and fold apps; the model does the moving (`View::press`).
+// The app table. A click selects a row, its arrow expands it. Up and Down move the selection,
+// Home and End go to the ends, Right and Left (or Enter and Space) expand and fold apps; the
+// model does the moving (`View::press`). Delete ends the selected row, Shift+Delete kills it;
+// a right click, the menu key or Shift+F10 opens its menu.
 component Table {
     in property <[Row]> rows;
     // Memory can't be split by app here: a message instead of the rows.
     in property <bool> unsplit;
-    // The focused row, -1 for none.
+    // The selected row, -1 for none.
     in property <int> current;
     callback pick(int);
+    callback expand(int);
     callback key(TableKey);
+    // The selected row can be ended: End and Kill show, named after it.
+    in property <bool> can-end;
+    in property <string> end-name;
+    // With the PID, for a process.
+    in property <string> end-full;
+    // Why the selected row has nothing to end, for its menu.
+    in property <string> nothing;
+    in property <bool> paused;
+    in property <string> paused-at;
+    // End's news ("Still running 5 s after End.") or a failure; empty for none.
+    in property <string> strip;
+    in property <bool> strip-error;
+    callback ask-end();
+    callback ask-kill();
+    callback pause-clicked();
     // The sorted column (0 for RAM in use) and its direction.
     in property <int> sort-column;
     in property <bool> sort-ascending;
@@ -1528,6 +1835,32 @@ component Table {
         field.focus-input();
     }
 
+    public function focus-rows() {
+        scope.focus();
+    }
+
+    // The row menu, at a point in the table's coordinates.
+    property <length> menu-x;
+    property <length> menu-y;
+    property <int> menu-current: -1;
+
+    function open-menu(index: int, x: length, y: length) {
+        root.pick(index);
+        root.menu-x = x;
+        root.menu-y = y;
+        root.menu-current = -1;
+        menu.show();
+    }
+
+    function menu-choose(kill: bool) {
+        menu.close();
+        if kill {
+            root.ask-kill();
+        } else {
+            root.ask-end();
+        }
+    }
+
     public function clear-search() {
         field.clear();
     }
@@ -1558,6 +1891,31 @@ component Table {
                     root.searched(text);
                 }
             }
+            // The two share the room up to Pause, each ending its name in an ellipsis.
+            if root.can-end: HorizontalLayout {
+                spacing: 12px;
+                horizontal-stretch: 0;
+                PushButton {
+                    max-width: 260px;
+                    glyph: Glyph.end;
+                    text: "End " + root.end-name;
+                    tip: "End " + root.end-full;
+                    notes: ["Asks it to close, as closing its window would.", "Delete"];
+                    clicked => {
+                        root.ask-end();
+                    }
+                }
+                PushButton {
+                    max-width: 260px;
+                    glyph: Glyph.kill;
+                    text: "Kill " + root.end-name;
+                    tip: "Kill " + root.end-full;
+                    notes: ["Stops it at once; unsaved work is lost.", "Shift+Delete"];
+                    clicked => {
+                        root.ask-kill();
+                    }
+                }
+            }
             if root.filtered != "": VerticalLayout {
                 alignment: center;
                 Rectangle {
@@ -1583,6 +1941,46 @@ component Table {
                 font-size: Theme.small;
                 font-weight: 800;
                 horizontal-alignment: right;
+            }
+            PushButton {
+                min-width: self.preferred-width;
+                glyph: root.paused ? Glyph.play : Glyph.pause;
+                text: root.paused ? "Resume" : "Pause";
+                on: root.paused;
+                tip: self.text;
+                notes: [root.paused ? "Reads again and updates the window." : "Freezes the window: SebWatch stops reading until you resume."];
+                clicked => {
+                    root.pause-clicked();
+                }
+            }
+        }
+        if root.paused || root.strip != "": VerticalLayout {
+            padding-left: Theme.picnic ? 14px : 12px;
+            padding-right: self.padding-left;
+            padding-bottom: Theme.picnic ? 8px : 10px;
+            spacing: 6px;
+            if root.paused: Strip {
+                glyph: Glyph.info;
+                tone: Theme.accent;
+                background: Theme.info-bg;
+                message: "Paused at " + root.paused-at + ". Nothing updates until you resume.";
+            }
+            if root.strip != "": Strip {
+                glyph: root.strip-error ? Glyph.kill : Glyph.warn;
+                tone: root.strip-error ? Theme.negative : Theme.warning;
+                background: root.strip-error ? Theme.negative-bg : Theme.warning-bg;
+                message: root.strip;
+                if !root.strip-error && root.can-end: VerticalLayout {
+                    alignment: center;
+                    PushButton {
+                        max-width: 260px;
+                        glyph: Glyph.kill;
+                        text: "Kill " + root.end-name;
+                        clicked => {
+                            root.ask-kill();
+                        }
+                    }
+                }
             }
         }
         // The header: Breeze's column dividers, or SebChat's small muted labels over a thick line.
@@ -1725,6 +2123,22 @@ component Table {
                 if event.modifiers.control || event.modifiers.alt {
                     return reject;
                 }
+                if event.text == Key.Delete {
+                    if root.can-end {
+                        if event.modifiers.shift {
+                            root.ask-kill();
+                        } else {
+                            root.ask-end();
+                        }
+                    }
+                    return accept;
+                }
+                if (event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift)) && root.current >= 0 {
+                    root.keyboard = true;
+                    root.reveal();
+                    root.open-menu(root.current, 120px, self.y + (root.current + 1) * root.row-height + view.content-y);
+                    return accept;
+                }
                 if event.text == Key.UpArrow {
                     root.press(TableKey.up);
                 } else if event.text == Key.DownArrow {
@@ -1763,6 +2177,83 @@ component Table {
                         root.keyboard = false;
                         scope.focus();
                         root.pick(i);
+                    }
+                    expand-clicked => {
+                        scope.focus();
+                        root.expand(i);
+                    }
+                    menu(x, y) => {
+                        root.keyboard = false;
+                        scope.focus();
+                        root.open-menu(i, x - root.absolute-position.x, y - root.absolute-position.y);
+                    }
+                }
+            }
+        }
+    }
+
+    // The row's menu: End and Kill, or why there is nothing to end. Up and Down move, Enter
+    // picks, Escape closes.
+    menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        Rectangle {
+            background: Theme.popup;
+            border-width: Theme.picnic ? 2px : 1px;
+            border-color: Theme.picnic ? Theme.outline : Theme.line;
+            border-radius: Theme.picnic ? 0 : 4px;
+            drop-shadow-blur: Theme.picnic ? 0 : 10px;
+            drop-shadow-offset-y: 3px;
+            drop-shadow-offset-x: Theme.picnic ? 3px : 0;
+            drop-shadow-color: Theme.picnic ? #5B331C30 : #00000050;
+            FocusScope {
+                init => {
+                    self.focus();
+                }
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        menu.close();
+                        scope.focus();
+                    } else if event.text == Key.UpArrow || event.text == Key.DownArrow || event.text == Key.Tab {
+                        root.menu-current = root.menu-current == 0 ? 1 : 0;
+                    } else if event.text == Key.Return || event.text == " " {
+                        if root.can-end && root.menu-current >= 0 {
+                            root.menu-choose(root.menu-current == 1);
+                        }
+                    } else {
+                        return reject;
+                    }
+                    accept
+                }
+                VerticalLayout {
+                    padding: Theme.picnic ? 6px : 4px;
+                    if root.can-end: MenuItem {
+                        glyph: Glyph.end;
+                        text: "End " + root.end-name;
+                        keys: "Delete";
+                        current: root.menu-current == 0;
+                        clicked => {
+                            root.menu-choose(false);
+                        }
+                    }
+                    if root.can-end: MenuItem {
+                        glyph: Glyph.kill;
+                        text: "Kill " + root.end-name;
+                        keys: "Shift+Delete";
+                        current: root.menu-current == 1;
+                        clicked => {
+                            root.menu-choose(true);
+                        }
+                    }
+                    if !root.can-end: HorizontalLayout {
+                        padding: 6px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        Muted {
+                            text: root.nothing;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
                     }
                 }
             }
@@ -1803,8 +2294,25 @@ export component MainWindow inherits Window {
     in property <string> warning;
     // Memory can't be split by app on this system.
     in property <bool> unsplit;
-    // The focused row, -1 for none.
+    // The selected row, -1 for none.
     in property <int> current: -1;
+    // End and Kill for the selected row (`Table`); `end-asks` for a desktop part, which End
+    // confirms first.
+    in property <bool> can-end;
+    in property <string> end-name;
+    in property <string> end-full;
+    in property <bool> end-asks;
+    in property <string> nothing;
+    in property <bool> paused;
+    in property <string> paused-at;
+    in property <string> strip;
+    in property <bool> strip-error;
+    // The row the strip is about.
+    in property <string> strip-key;
+    callback end();
+    callback kill();
+    callback pause-clicked();
+    callback expand(int);
     in property <int> sort-column;
     in property <bool> sort-ascending;
     in property <string> filtered;
@@ -1818,6 +2326,29 @@ export component MainWindow inherits Window {
     callback theme-chosen(ThemeChoice);
 
     in property <string> version;
+
+    // The confirmation open: none, Kill, or End for a desktop part.
+    property <int> asking;
+    property <int> asking-kill: 1;
+    property <int> asking-end: 2;
+
+    function ask-end() {
+        if root.end-asks {
+            root.asking = root.asking-end;
+        } else {
+            root.end();
+        }
+    }
+
+    function answer(yes: bool) {
+        if yes && root.asking == root.asking-kill {
+            root.kill();
+        } else if yes {
+            root.end();
+        }
+        root.asking = 0;
+        table.focus-rows();
+    }
 
     title: "SebWatch " + root.version;
     icon: @image-url("../../../art/icons/hicolor/256x256/apps/sebwatch.png");
@@ -2002,6 +2533,26 @@ export component MainWindow inherits Window {
                             pick(index) => {
                                 root.pick(index);
                             }
+                            expand(index) => {
+                                root.expand(index);
+                            }
+                            can-end: root.can-end;
+                            end-name: root.end-name;
+                            end-full: root.end-full;
+                            nothing: root.nothing;
+                            paused: root.paused;
+                            paused-at: root.paused-at;
+                            strip: root.strip;
+                            strip-error: root.strip-error;
+                            ask-end => {
+                                root.ask-end();
+                            }
+                            ask-kill => {
+                                root.asking = root.asking-kill;
+                            }
+                            pause-clicked => {
+                                root.pause-clicked();
+                            }
                             key(key) => {
                                 root.key(key);
                             }
@@ -2028,5 +2579,73 @@ export component MainWindow inherits Window {
     if table.tip.shown: FocusTip {
         tip: table.tip;
         room: root.width;
+    }
+
+    // Kill, or End on a desktop part, asks first. Cancel has the focus; Escape cancels.
+    if root.asking != 0: Rectangle {
+        background: Theme.picnic ? #5B331C55 : Theme.dark ? #00000077 : #00000044;
+        TouchArea { }
+        FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.answer(false);
+                    return accept;
+                }
+                reject
+            }
+            Card {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 440px;
+                height: self.preferred-height;
+                inset: 18px;
+                fill: Theme.picnic ? Theme.view : Theme.bg;
+                accessible-role: groupbox;
+                accessible-label: title.text;
+                HorizontalLayout {
+                    spacing: 14px;
+                    VerticalLayout {
+                        alignment: start;
+                        GlyphIcon {
+                            glyph: Glyph.warn;
+                            size: 32px;
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        title := Label {
+                            text: (root.asking == root.asking-kill ? "Kill " : "End ") + root.end-full + "?";
+                            font-weight: Theme.picnic ? 800 : 700;
+                            wrap: word-wrap;
+                        }
+                        Label {
+                            text: root.asking == root.asking-kill ? "It stops at once. Unsaved work is lost." : "It is part of the desktop: ending it can close your session or leave the screen blank.";
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            padding-top: 12px;
+                            spacing: 8px;
+                            alignment: LayoutAlignment.end;
+                            PushButton {
+                                glyph: root.asking == root.asking-kill ? Glyph.kill : Glyph.end;
+                                text: root.asking == root.asking-kill ? "Kill" : "End";
+                                clicked => {
+                                    root.answer(true);
+                                }
+                            }
+                            cancel := PushButton {
+                                text: "Cancel";
+                                init => {
+                                    self.focus-button();
+                                }
+                                clicked => {
+                                    root.answer(false);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

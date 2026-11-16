@@ -126,6 +126,20 @@ fn find(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color) -> (f32, f32) {
     (x as f32 + run as f32 / 2.0, y as f32 + 12.0)
 }
 
+/// End and Kill on the sample: its processes in a /proc of their own, so selecting one offers
+/// End and Kill, and nothing on this PC can be ended.
+fn sample_system() -> crate::ending::System {
+    let root = std::env::temp_dir().join(format!("sebwatch-shots-{}", std::process::id()));
+    for pid in [4130176, 4130291, 4130195] {
+        std::fs::create_dir_all(root.join("proc").join(pid.to_string())).unwrap();
+    }
+    crate::ending::System {
+        cgroup_root: root.join("cgroup"),
+        proc_root: root.join("proc"),
+        uid: crate::ending::System::new().uid,
+    }
+}
+
 /// Expands or folds a row by its key, as a click would but without focusing it.
 fn toggle(ui: &MainWindow, key: &str) {
     crate::VIEW.with_borrow_mut(|view| {
@@ -161,6 +175,8 @@ fn screenshots() {
             &ui,
             crate::sample::snapshot(),
             Default::default(),
+            sample_system(),
+            |_| {},
             |_| {},
             |_| {},
         );
@@ -392,6 +408,8 @@ fn screenshots() {
             &ui,
             crate::sample::snapshot(),
             Default::default(),
+            sample_system(),
+            |_| {},
             |_| {},
             |_| {},
         );
@@ -429,8 +447,10 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("focus-tile-disk-{name}.png")),
         );
-        shot.tap(Key::Tab);
-        shot.tap(Key::Tab);
+        // Past the search field, End, Kill and Pause to the headers.
+        for _ in 0..5 {
+            shot.tap(Key::Tab);
+        }
         // Left/Right to Disk, the fifth figure; Enter sorts by it.
         for _ in 0..5 {
             shot.tap(Key::RightArrow);
@@ -482,8 +502,10 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("focus-leftover-{name}.png")),
         );
-        shot.tap(Key::Backtab);
-        shot.tap(Key::Backtab);
+        // Back past the headers, Pause, Kill and End.
+        for _ in 0..5 {
+            shot.tap(Key::Backtab);
+        }
         if choice == ThemeChoice::Light {
             shot.save(&shot.render(), &dir.join("focus-search-light.png"));
         }
@@ -497,6 +519,105 @@ fn screenshots() {
         ui.hide().unwrap();
     }
 
+    // #42 and #63: the qemu process selected, with End and Kill beside the search field; its
+    // menu from the menu key; Kill asked from Shift+Delete; End's strip 5 s on; the app selected
+    // in a narrow window; then paused, with netsimd ended. Nothing is ended or killed.
+    for (choice, name, height) in [
+        (ThemeChoice::Light, "light", 844),
+        (ThemeChoice::Dark, "dark", 844),
+        (ThemeChoice::Sebchat, "sebchat", 1024),
+    ] {
+        let ui = MainWindow::new().unwrap();
+        ui.global::<Theme>().set_choice(choice);
+        crate::setup(
+            &ui,
+            crate::sample::snapshot(),
+            Default::default(),
+            sample_system(),
+            |_| {},
+            |_| {},
+            |_| {},
+        );
+        ui.show().unwrap();
+        let shot = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width: 1000,
+            height,
+        };
+        window.set_size(PhysicalSize::new(shot.width, shot.height));
+        toggle(&ui, "Android emulator");
+        ui.invoke_pick(2);
+        assert!(ui.get_can_end());
+        assert_eq!(ui.get_end_full(), "qemu-system-x86_64 (4130176)");
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("select-process-{name}.png")),
+        );
+        // To the table: menu button, tiles, search field, End, Kill, Pause, headers, rows.
+        for _ in 0..8 {
+            shot.tap(Key::Tab);
+        }
+        shot.tap(Key::Menu);
+        shot.save(&shot.render(), &dir.join(format!("select-menu-{name}.png")));
+        shot.tap(Key::Escape);
+        shot.key(Key::Shift, true);
+        shot.tap(Key::Delete);
+        shot.key(Key::Shift, false);
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("kill-confirm-{name}.png")),
+        );
+        shot.tap(Key::Escape);
+
+        // The leftover row: no buttons.
+        ui.invoke_pick(6);
+        assert!(!ui.get_can_end());
+        assert_eq!(
+            ui.get_nothing(),
+            "Nothing to end: no process owns this memory."
+        );
+
+        ui.invoke_pick(1);
+        ui.set_strip_key(ui.get_rows().row_data(1).unwrap().key);
+        ui.set_strip("Still running 5 s after End.".into());
+        ui.set_strip_error(false);
+        crate::VIEW.with_borrow_mut(|view| {
+            view.note("Android emulator", crate::model::Note::Running);
+            crate::show(&ui, view.render());
+        });
+        assert_eq!(ui.get_strip(), "Still running 5 s after End.");
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("still-running-{name}.png")),
+        );
+
+        window.set_size(PhysicalSize::new(760, shot.height));
+        let narrow = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width: 760,
+            height: shot.height,
+        };
+        narrow.save(
+            &narrow.render(),
+            &dir.join(format!("select-narrow-{name}.png")),
+        );
+        window.set_size(PhysicalSize::new(shot.width, shot.height));
+
+        crate::VIEW.with_borrow_mut(|view| {
+            view.note("Android emulator", crate::model::Note::Ending);
+            view.note(
+                "Android emulator\u{1}netsimd\u{1}4130291",
+                crate::model::Note::Ended,
+            );
+        });
+        ui.invoke_pause_clicked();
+        assert!(ui.get_paused());
+        shot.save(&shot.render(), &dir.join(format!("paused-{name}.png")));
+        ui.hide().unwrap();
+    }
+
     // This PC's own reading through sebwatch-core, twice so CPU and disk have rates, with the
     // biggest app expanded into its processes.
     let mut reader = crate::live::Reader::new();
@@ -507,6 +628,8 @@ fn screenshots() {
         &ui,
         reader.read(interval, &Default::default()).unwrap(),
         Default::default(),
+        crate::ending::System::new(),
+        |_| {},
         |_| {},
         |_| {},
     );
@@ -568,7 +691,15 @@ fn bench_refresh() {
         .expect("the bench group belongs to an app");
     let (key, processes) = (app.key.clone(), app.pids.len());
     let ui = MainWindow::new().unwrap();
-    crate::setup(&ui, first, Default::default(), |_| {}, |_| {});
+    crate::setup(
+        &ui,
+        first,
+        Default::default(),
+        crate::ending::System::new(),
+        |_| {},
+        |_| {},
+        |_| {},
+    );
     ui.show().unwrap();
     window.set_size(PhysicalSize::new(shot.width, shot.height));
     shot.render();

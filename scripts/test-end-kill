@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Selecting, pausing, End and Kill (#42, #63): the unit tests for the target choice and the
+# selection, an end-to-end test that ends and kills throwaway processes it starts in
+# `systemd-run --user --scope` (nothing else is touched), the AT-SPI checks on a headless KWin,
+# and offscreen screenshots in target/shots-end-kill. Nothing shows on the desktop. One line
+# per check; full logs in target/logs/.
+set -u
+cd "$(dirname "$0")/.."
+
+logs=target/logs
+mkdir -p "$logs"
+
+for tool in cargo systemd-run systemctl; do
+    command -v "$tool" >/dev/null || { echo "MISSING: $tool not found"; exit 1; }
+done
+systemctl --user show-environment >/dev/null 2>&1 || { echo "MISSING: a systemd user session"; exit 1; }
+
+status=0
+step() { # name timeout command...
+    local name=$1 limit=$2; shift 2
+    if timeout "$limit" "$@" >"$logs/$name.log" 2>&1; then
+        echo "PASS $name"
+    else
+        echo "FAIL $name (see $logs/$name.log)"
+        status=1
+    fi
+}
+
+step end-kill-build 900 cargo test -p sebwatch --no-run
+step end-kill-unit 300 cargo test -p sebwatch --bin sebwatch -- ending:: model::
+step end-kill-e2e 120 cargo test -p sebwatch --bin sebwatch -- --ignored --exact \
+    ending::tests::ends_and_kills_throwaway_processes
+if timeout 400 scripts/a11y >"$logs/end-kill-a11y.log" 2>&1; then
+    echo "PASS a11y"
+else
+    echo "FAIL a11y: $(grep -v '^PASS' "$logs/end-kill-a11y.log" | head -n 3 | tr '\n' ' ')"
+    status=1
+fi
+step end-kill-screenshots 600 scripts/screenshots target/shots-end-kill
+exit $status

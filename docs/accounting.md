@@ -179,6 +179,28 @@ the cgroup root, the same key the memory numbers use.
     processes, and every process every 15th refresh (30 s), so a running process that opens the
     GPU late shows within 30 s; a refresh otherwise takes about 3 ms.
 
+## End and Kill (`crates/app/src/ending.rs`)
+
+What a selected row stands for: an app is its cgroups, a child group its own cgroup, a process
+its PID. Only the user's own processes; SebWatch has no root.
+
+- A cgroup that is a `.scope` or `.service` of the user's own systemd (under
+  `user@<uid>.service`) is a unit. **End** stops it (`StopUnit` on the session bus, mode
+  `replace`), so systemd sends SIGTERM to every process in it and waits as the unit says.
+  **Kill** writes `1` to its `cgroup.kill`, which SIGKILLs every process in it at once.
+- Any other cgroup (the login session's `session-N.scope` of the system's systemd, a group
+  nested inside a unit) is signalled process by process: its `cgroup.procs` owned by the user
+  (the owner of `/proc/<pid>`) get SIGTERM for End, SIGKILL for Kill; other users' are left.
+- A process gets SIGTERM for End, SIGKILL for Kill, if the user owns it.
+- Refused, with the reason in the row's menu: a group or process with none of the user's
+  processes ("Owned by root: SebWatch can only end your own processes."), one that has exited,
+  `user@<uid>.service/init.scope` (the systemd running the session), and rows that are memory
+  rather than processes (Not attributed, Closed apps).
+- End asks first for the desktop's own parts: units under the user's `session.slice` (Plasma,
+  KWin, portals) and the login session's scope, or a process in one.
+- After End or Kill the window checks every 250 ms whether anything is left: a unit's
+  `cgroup.procs`, or the process's `/proc/<pid>/stat` (a zombie counts as gone).
+
 ## In the window (`crates/app/src/model.rs`, `live.rs`)
 
 - **RAM bar**: the five biggest apps in their own colours, then Other apps (the rest's RAM in

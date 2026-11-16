@@ -30,6 +30,7 @@ fn app(
         detail: detail.into(),
         icon: icon.into(),
         groups: Vec::new(),
+        cgroups: vec![unit(&format!("app-{}.scope", name.replace(' ', "-")))],
         pids: Vec::new(),
         ram,
         zswap: None,
@@ -47,6 +48,12 @@ fn app(
         over_charge: 0,
         unreadable: Vec::new(),
     }
+}
+
+/// A unit of this user's systemd, as End and Kill find it.
+fn unit(leaf: &str) -> std::path::PathBuf {
+    let uid = crate::ending::System::new().uid;
+    format!("user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{leaf}").into()
 }
 
 fn part(name: &str, pid: u32, ram: u64, swap: u64, cpu: f32) -> Part {
@@ -90,6 +97,7 @@ pub fn snapshot() -> Snapshot {
             unattributed_ram: b(1.2, G),
             unattributed_swap: b(296.0, M),
             groups: vec!["emulator-guide35.service".into()],
+            cgroups: vec![unit("emulator-guide35.service")],
             pids: vec![4130176, 4130195, 4130291, 4130302],
             unreadable: vec![Unreadable {
                 name: "adb".into(),

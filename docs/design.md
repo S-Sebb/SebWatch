@@ -67,6 +67,21 @@ corners. Every card keeps a 16 px margin to the window's edge and the tiles' gap
 SebChat 14 px) to its neighbours, and the bars card and the Apps card line up on both sides. The
 menu button sits in the bars card's top-right corner, after Memory's total.
 
+**Selecting, pausing, End and Kill** (#42, #63). A click selects a row (the theme's selection
+colour); only its arrow, or Right and Left, Enter and Space, expands it. The selection follows
+its row's key across refreshes and searches, and the table keeps its scroll position. With a
+row selected, "End <name>" and "Kill <name>" buttons sit beside the search field, sharing the
+room up to Pause and ending a long name in an ellipsis (the tooltip has it whole, with the PID
+of a process). The row's menu (right click, the menu key or Shift+F10) has the same two, with
+Delete and Shift+Delete as their keys. A row with nothing to end (Not attributed, Closed apps,
+the "N more apps" fold, another user's processes) shows no buttons, and its menu says why.
+Kill asks first, with Cancel focused; End asks first only for a part of the desktop (Plasma,
+KWin, the login session). After End the row says "ending…"; 5 s later, if it still runs, it
+says "still running" and a strip offers Kill. A failed End or Kill shows a red strip with the
+reason. Pause, at the right of the search line, freezes the whole window: SebWatch stops reading
+until Resume, a strip says "Paused at HH:MM:SS", and End and Kill still work, an ended row
+greyed with "ended" until Resume. What End and Kill do is in `docs/accounting.md`.
+
 **Small windows** (#36). The window is at least 760 × 480 and remembers its size in the
 settings file (not when maximised or full screen). A narrow window keeps the name column at
 220 px and in view, while the value columns, header and rows together, scroll sideways under it
@@ -80,7 +95,7 @@ cause and the time of the reading shown. A system that can't split memory by app
 message in place of the table (#38).
 
 **Keyboard and screen readers.** Tab goes from the menu button to the tiles, the search field,
-the column headers and the table. The tiles are one Tab stop and the headers another: the arrows
+End, Kill and Pause, the column headers and the table. The tiles are one Tab stop and the headers another: the arrows
 move inside each, and Enter or Space on a header sorts by it. Every tile and column header says
 in one sentence what its number measures (#41): in the bars' tooltip style on hover, at once
 when it has the keyboard focus, and as its accessible description. In the table, Up and Down

@@ -298,6 +298,7 @@ impl Reader {
                 },
                 icon: named.icon,
                 groups: app.cgroups.iter().map(|g| leaf_name(g)).collect(),
+                cgroups: app.cgroups.clone(),
                 pids: pids.concat(),
                 ram: app.ram,
                 zswap: None,
