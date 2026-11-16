@@ -50,7 +50,7 @@
 | Needs | Why |
 |---|---|
 | **Linux** with cgroup v2 and a systemd user session | Each app the desktop starts runs in its own group, which is what SebWatch reads |
-| **NVIDIA driver** (optional) | For the VRAM bar and the GPU columns; without it they are not shown |
+| **NVIDIA driver** (optional) | For GPU and VRAM readings; without it the VRAM bar and the GPU and VRAM tiles are hidden, and the table shows — in their columns |
 | **Rust** (stable) and the fontconfig and xkbcommon development packages | To build it: `fontconfig-devel libxkbcommon-devel` on Fedora |
 
 There are no packages yet. From a checkout:
