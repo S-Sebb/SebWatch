@@ -530,7 +530,10 @@ component RowView inherits Rectangle {
     property <bool> top: self.entry.kind == RowKind.app || self.entry.kind == RowKind.more;
     property <length> small: Theme.picnic && !self.top ? Theme.small : Theme.font-size;
     property <color> muted: self.selected ? Theme.selected-muted : Theme.muted;
-    height: Theme.picnic ? 31px : 28px;
+    // The focused remainder row holds its explanation as a second line, below the figures.
+    property <bool> show-tip: self.focused && self.entry.tip != "";
+    property <length> line: Theme.picnic ? 31px : 28px;
+    height: self.show-tip ? self.line + tip.preferred-height + 6px : self.line;
     background: self.selected ? Theme.selection : Math.mod(self.index, 2) == 1 && !Theme.picnic ? Theme.alt : transparent;
     accessible-role: list-item;
     accessible-label: self.entry.detail == "" ? self.entry.name : self.entry.name + " " + self.entry.detail;
@@ -558,6 +561,8 @@ component RowView inherits Rectangle {
     }
 
     HorizontalLayout {
+        y: 0;
+        height: root.line;
         padding-left: 8px;
         padding-right: 8px;
         HorizontalLayout {
@@ -646,6 +651,20 @@ component RowView inherits Rectangle {
             text: root.entry.vram;
             font-size: root.small;
         }
+    }
+
+    tip := Label {
+        x: 8px + 74px;
+        y: root.line - 2px;
+        width: root.width - self.x - 16px;
+        visible: root.show-tip;
+        text: root.show-tip ? root.entry.tip : "";
+        font-size: Theme.small;
+        color: root.muted;
+        wrap: word-wrap;
+        vertical-alignment: TextVerticalAlignment.top;
+        // Already in the row's description.
+        accessible-role: none;
     }
 
     if root.focused: FocusRing {
@@ -987,23 +1006,6 @@ component Table {
                             root.pick(i);
                         }
                     }
-                }
-            }
-            // A focused row's tooltip, the one hovering shows, under the row (above it near the
-            // bottom). Last, so it is drawn over the rows and isn't counted among them.
-            property <bool> tip-shown: root.current >= 0 && root.current < root.rows.length && scope.has-focus && root.keyboard && root.rows[root.current].tip != "";
-            property <length> row-y: root.current * root.row-height + view.content-y;
-            if self.tip-shown: TipCard {
-                x: 90px;
-                width: self.preferred-width;
-                height: self.preferred-height;
-                y: scope.row-y + root.row-height + self.preferred-height <= scope.height ? scope.row-y + root.row-height + 2px : scope.row-y - self.preferred-height - 2px;
-                Label {
-                    width: 420px;
-                    text: root.rows[root.current].tip;
-                    font-size: Theme.small;
-                    wrap: word-wrap;
-                    accessible-role: none;
                 }
             }
         }

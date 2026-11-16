@@ -54,7 +54,7 @@ It refreshes every 2 s while visible and does nothing while minimised or hidden.
 table. In the table, Up and Down move the focus, Home and End go to the ends, Right and Left (or
 Enter and Space) expand and fold apps, the fold and Closed apps; the focus follows its row when
 a refresh reorders the rows or a search narrows them. A focused row with a tooltip (an app's
-"Not attributed to processes" row) shows it under the row. The menu opens
+"Not attributed to processes" row) grows to show it as a second line. The menu opens
 with Enter, Space or Down; its items take the arrows, Enter and Escape. The focused item has
 Breeze's 1 px accent frame inside it (2 px and square in SebChat), shown after a key, not after
 a click. Rows, bar segments, tiles, the menu button and the menu's items have accessible roles
