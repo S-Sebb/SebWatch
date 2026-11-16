@@ -24,7 +24,9 @@ parent's group, so a build an agent starts is charged to that agent.
   children are read moments apart). That share goes to the running app whose groups are the
   only ones in the nearest enclosing group that has any (a Steam slice with an exited helper
   scope: Steam), otherwise to one entry, **Closed apps (cache)** (`memory::CLOSED_APPS`), with
-  no groups, named and iconed as a background service.
+  no groups of processes; its `exited` lists each group it holds with that group's own share
+  (they sum to the entry). The window names them as it names apps (`naming.rs`), merging
+  groups of one name.
 - **Grouping**: several groups can belong to one app (each Claude agent gets its own scope,
   T3 Code has an AppImage service and a scope). Group them by `naming::clean_name`: strip the
   `.scope/.service/.slice` suffix, the template instance (`@autostart`, `@<id>`), the `app-`,
@@ -130,11 +132,12 @@ the cgroup root, the same key the memory numbers use.
 ## In the window (`crates/app/src/model.rs`, `live.rs`)
 
 - **RAM bar**: the five biggest apps in their own colours, then Other apps (the rest's RAM in
-  use), Zswap pool, File cache (every app's file cache), Kernel, drivers and unattributed and Free; the
+  use), Closed apps (cache) (its RAM in use; grey and hatched like File cache), Zswap pool, File cache (every app's file cache), Kernel, drivers and unattributed and Free; the
   shares add up to `MemTotal`.
-- **Closed apps (cache)** is a row like any app, sorted with them: its RAM counts in Other apps
-  unless it is in the top five, its cache in File cache. It has no processes, so expanded it
-  shows only "Not attributed to processes".
+- **Closed apps (cache)** is not an app: it is never among a bar's named apps or Other apps,
+  and its row is the table's last, whatever the sort. Its cache counts in File cache. Expanded,
+  it lists the exited groups it holds, each with its RAM, swap and file cache. Its swap, when
+  it has some, is its own segment in the swap bar too.
 - **Swap bar**: the five biggest apps by swap, Other apps, and free swap (`SwapTotal` minus every
   app's swap).
 - **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the five biggest apps by VRAM (each app's

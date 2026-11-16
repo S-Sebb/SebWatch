@@ -28,6 +28,21 @@ fn fixture_sums_exactly_to_mem_total() {
         ]
     );
     assert!(m.apps[4].cgroups.is_empty());
+    // The closed-apps entry keeps its groups, which sum to it; other apps keep none.
+    let exited: Vec<_> = m.apps[4]
+        .exited
+        .iter()
+        .map(|e| (e.group.to_str().unwrap(), e.ram, e.file_cache, e.swap))
+        .collect();
+    assert_eq!(
+        exited,
+        [
+            ("user.slice/app.slice/app-gone-55.scope", 600, 600, 0),
+            ("user.slice", 100, 0, 0),
+            ("user.slice/app.slice", 0, 3_000, 0),
+        ]
+    );
+    assert!(m.apps[..4].iter().all(|a| a.exited.is_empty()));
     assert_eq!(m.apps[2].cgroups.len(), 2);
     // The emulator's processes sit in a child without the memory controller: charged to the
     // service, listed under the child (the key CPU and disk use).

@@ -97,8 +97,8 @@ fn same(p: Rgb8Pixel, colour: slint::Color) -> bool {
     (p.r, p.g, p.b) == (colour.red(), colour.green(), colour.blue())
 }
 
-/// The middle of the first run of this colour on pixel row `y`.
-fn find_in_row(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color, y: f32) -> f32 {
+/// The first run of this colour on pixel row `y`: its start and end.
+fn run_in_row(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color, y: f32) -> (f32, f32) {
     let line = &pixels[(y as u32 * width) as usize..][..width as usize];
     let start = line
         .iter()
@@ -108,7 +108,7 @@ fn find_in_row(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color, y: f32) -
         .iter()
         .take_while(|&&p| same(p, colour))
         .count();
-    start as f32 + run as f32 / 2.0
+    (start as f32, (start + run) as f32)
 }
 
 /// The middle of the first run of this colour on the topmost row that has it.
@@ -177,7 +177,8 @@ fn screenshots() {
         // app's row, found by its swatch (the lowest pixel of its colour near the left edge).
         let kernel = ui.global::<Theme>().get_kernel();
         shot.pointer(4.0, 4.0, false);
-        shot.pointer(find_in_row(&first, shot.width, kernel, y), y, false);
+        let (start, end) = run_in_row(&first, shot.width, kernel, y);
+        shot.pointer((start + end) / 2.0, y, false);
         shot.wait(Duration::from_millis(800));
         shot.save(
             &shot.render(),
@@ -203,6 +204,29 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("leftover-row-{name}.png")),
         );
+
+        // Closed apps hovered: the segment after Other apps, grey too, so the rightmost pixel
+        // of that grey; and its row expanded in a window tall enough for the whole table.
+        ui.invoke_toggle("Android emulator".into());
+        let other = ui.global::<Theme>().get_other();
+        let line = &first[(y as u32 * shot.width) as usize..][..shot.width as usize];
+        let closed = line.iter().rposition(|&p| same(p, other)).unwrap() as f32 - 3.0;
+        ui.invoke_toggle("\u{0}closed".into());
+        window.set_size(PhysicalSize::new(shot.width, 1300));
+        let tall = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width: shot.width,
+            height: 1300,
+        };
+        tall.render();
+        tall.pointer(4.0, 4.0, false);
+        tall.pointer(closed, y, false);
+        tall.wait(Duration::from_millis(800));
+        tall.save(&tall.render(), &dir.join(format!("closed-{name}.png")));
+        window.set_size(PhysicalSize::new(shot.width, shot.height));
+        ui.invoke_toggle("\u{0}closed".into());
+        ui.invoke_toggle("Android emulator".into());
 
         shot.pointer(4.0, 4.0, false);
         crate::present(&ui, crate::sample::asleep());

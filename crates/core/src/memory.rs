@@ -59,6 +59,19 @@ pub struct AppMemory {
     /// The app's groups with processes, relative to the cgroup root: the keys of
     /// [`crate::cpu_io::Sample`], for CPU, disk and drill-down. Empty for [`CLOSED_APPS`].
     pub cgroups: Vec<PathBuf>,
+    /// For [`CLOSED_APPS`]: the groups without processes it holds, biggest RAM first; they sum
+    /// to the entry. Empty for any other app.
+    pub exited: Vec<Exited>,
+}
+
+/// One group without processes and its own charges (without its children's).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Exited {
+    /// Relative to the cgroup root.
+    pub group: PathBuf,
+    pub ram: u64,
+    pub file_cache: u64,
+    pub swap: u64,
 }
 
 /// Reads the accounting from a cgroup v2 root and a procfs root ([`CGROUP_ROOT`] and
@@ -114,6 +127,7 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
                 file_cache,
                 swap: c.swap,
                 cgroups: groups,
+                exited: Vec::new(),
             }),
         }
     };
@@ -180,7 +194,21 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
             .cloned()
             .flatten()
             .unwrap_or_else(|| CLOSED_APPS.into());
+        let closed = name == CLOSED_APPS;
         add(&mut apps, name, &own, Vec::new());
+        if closed {
+            let entry = apps.iter_mut().find(|a| a.name == CLOSED_APPS);
+            entry.expect("just added").exited.push(Exited {
+                group: group.clone(),
+                ram: own.ram(),
+                file_cache: own.file_cache(),
+                swap: own.swap,
+            });
+        }
+    }
+    for app in &mut apps {
+        app.exited
+            .sort_by(|a, b| b.ram.cmp(&a.ram).then_with(|| a.group.cmp(&b.group)));
     }
     apps.sort_by(|a, b| b.ram.cmp(&a.ram).then_with(|| a.name.cmp(&b.name)));
 
