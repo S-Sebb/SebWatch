@@ -159,6 +159,10 @@ the cgroup root, the same key the memory numbers use.
 - **Search** matches an app's display name, its grouping name and its groups' names (part of
   them, any case), or a whole PID from its groups' `cgroup.procs`, read every refresh for every
   app (the first group's was already read to name the app).
+- Each tile's graph is its last 30 readings (60 s at 2 s), kept in memory only: CPU and GPU as
+  a share of the whole, VRAM of its total, Disk scaled to its own peak in that minute. A
+  refresh that didn't happen (the window minimised, a failed reading) is a gap, not a line
+  across it; a sleeping GPU's tiles have no graph.
 - An expanded app reads its processes (`processes.rs`) only while expanded; its rows plus
   "Not attributed to processes" sum to its RAM in use. That row's swap is the app's swap minus
   its processes' swap. It adds " · N unreadable" when N processes couldn't be read, and

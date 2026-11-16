@@ -6,7 +6,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use slint::platform::Key;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
@@ -163,6 +163,10 @@ fn screenshots() {
             |_| {},
             |_| {},
         );
+        let began = Instant::now();
+        for reading in crate::sample::minute(crate::sample::snapshot, began) {
+            crate::present(&ui, reading);
+        }
         ui.show().unwrap();
         let shot = Shot {
             window: window.clone(),
@@ -236,7 +240,10 @@ fn screenshots() {
         toggle(&ui, "Android emulator");
 
         shot.pointer(4.0, 4.0, false);
-        crate::present(&ui, crate::sample::asleep());
+        let later = began + Duration::from_secs(60);
+        for reading in crate::sample::minute(crate::sample::asleep, later) {
+            crate::present(&ui, reading);
+        }
         shot.save(&shot.render(), &dir.join(format!("app-{name}-asleep.png")));
 
         // Sorted by swap, largest first, then smallest first.

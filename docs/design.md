@@ -46,7 +46,9 @@ Top to bottom:
    into "N more apps") and a chip reads "Filtered: N of M apps · the bars show the whole system";
    the bars and tiles don't change. "Closed apps (cache)" stays only when the search finds it
    or one of the apps it lists.
-5. Small headline tiles for CPU, GPU, VRAM and disk beside the bars, under the menu button.
+5. Small headline tiles for CPU, GPU, VRAM and disk beside the bars, under the menu button:
+   the value large, its unit below, and the last minute as a line with a light fill along the
+   tile's bottom, under the words (tile style T3, #52).
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.
 
