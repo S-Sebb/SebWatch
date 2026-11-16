@@ -51,8 +51,14 @@ From the top:
    the words (tile style T3, #52). All four are the same size, graph or not. From 1400 px wide
    they sit two by two, so the top area is only as tall as the bars and the table gets the rest;
    narrower windows stack them in one column (#58). The top area is as short as the taller of
-   the tiles and the bars allows, and the bars share any spare height in equal gaps. The menu
-   button sits at the top right.
+   the tiles and the bars allows, and the bars share any spare height in equal gaps.
+
+**Cards** (#66). The window is a set of matching cards, drawn like the tiles (Breeze: the view
+colour in a 1 px frame with rounded corners; SebChat: the notched pixel frame): the tiles, one
+card for the bars and one Apps card holding the search line and the table, clipped to its
+corners. Every card keeps a 16 px margin to the window's edge and the tiles' gap (Breeze 8 px,
+SebChat 14 px) to its neighbours, and the bars card and the Apps card line up on both sides. The
+menu button sits in the bars card's top-right corner, after Memory's total.
 
 **Small windows** (#36). The window is at least 760 × 480 and remembers its size in the
 settings file (not when maximised or full screen). A narrow window keeps the name column at

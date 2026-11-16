@@ -166,9 +166,11 @@ export component Dashed {
 
 // SebChat's notched pixel frame: an outline with the corners cut away, a highlight top-left,
 // a lowlight bottom-right and a hard drop shadow 3px past it right and below.
-// In the Breeze looks it draws nothing and adds no padding.
+// In the Breeze looks: the view colour in a 1 px frame with rounded corners, as KDE's frames.
 export component Card {
     in property <length> inset: 14px;
+    // Clips the contents to the Breeze frame's corners, for contents that reach the frame.
+    in property <bool> clip-content;
     in property <length> gap: 0;
     in property <color> fill: Theme.view;
     in property <color> high: #ffffff;
@@ -265,10 +267,26 @@ export component Card {
         }
     }
 
-    VerticalLayout {
-        padding: Theme.picnic ? root.inset : 0;
-        spacing: root.gap;
-        @children
+    if !Theme.picnic: Rectangle {
+        background: root.fill;
+        border-radius: 5px;
+    }
+
+    Rectangle {
+        clip: root.clip-content && !Theme.picnic;
+        border-radius: Theme.picnic ? 0 : 5px;
+        VerticalLayout {
+            padding: root.inset;
+            spacing: root.gap;
+            @children
+        }
+    }
+
+    // Drawn over the contents, so a row or header reaching the edge doesn't cover it.
+    if !Theme.picnic: Rectangle {
+        border-width: 1px;
+        border-color: Theme.line;
+        border-radius: 5px;
     }
 }
 
