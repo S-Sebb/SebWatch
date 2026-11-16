@@ -1,7 +1,7 @@
 //! The window drawn offscreen by Slint's software renderer, in each theme, with the Android
 //! emulator's bar segment hovered and its row expanded, then with the NVIDIA GPU asleep, then
 //! sorted by swap both ways, then searched for "k" from the keyboard, plus Breeze Light with the menu open, and one of this PC's live
-//! reading.
+//! reading. Also `bench_refresh`, the window side of `scripts/bench processes`.
 //! Nothing shows on the screen. Run with `scripts/screenshots <dir>`.
 
 use std::cell::Cell;
@@ -409,4 +409,81 @@ fn screenshots() {
     };
     window.set_size(PhysicalSize::new(shot.width, shot.height));
     shot.save(&shot.render(), &dir.join("live-light.png"));
+}
+
+/// `scripts/bench processes`: the CPU one refresh costs, reading and showing it, with the app
+/// that holds the group `SEBWATCH_BENCH_GROUP` (relative to the cgroup root) folded, then
+/// expanded. Prints one line each.
+#[test]
+#[ignore = "needs a large group; run through scripts/bench processes"]
+fn bench_refresh() {
+    const READS: u32 = 10;
+    let group = std::env::var("SEBWATCH_BENCH_GROUP").expect("SEBWATCH_BENCH_GROUP names a group");
+    let leaf = group.rsplit('/').next().unwrap();
+    // This thread's CPU time in seconds: schedstat's first field is in ns.
+    let cpu = || {
+        let stat = std::fs::read_to_string("/proc/thread-self/schedstat").unwrap();
+        stat.split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+            / 1e9
+    };
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    let now = Rc::new(Cell::new(Duration::ZERO));
+    slint::platform::set_platform(Box::new(Offscreen {
+        window: window.clone(),
+        now: now.clone(),
+    }))
+    .unwrap();
+    let shot = Shot {
+        window: window.clone(),
+        now,
+        width: 1000,
+        height: 844,
+    };
+
+    let mut reader = crate::live::Reader::new();
+    let first = reader.read(crate::REFRESH, &Default::default()).unwrap();
+    let app = first
+        .apps
+        .iter()
+        .find(|a| a.groups.iter().any(|g| g == leaf))
+        .expect("the bench group belongs to an app");
+    let (key, processes) = (app.key.clone(), app.pids.len());
+    let ui = MainWindow::new().unwrap();
+    crate::setup(&ui, first, Default::default(), |_| {}, |_| {});
+    ui.show().unwrap();
+    window.set_size(PhysicalSize::new(shot.width, shot.height));
+    shot.render();
+
+    for label in ["folded", "expanded"] {
+        if label == "expanded" {
+            crate::VIEW.with_borrow_mut(|view| view.toggle(&key));
+        }
+        let expanded = crate::VIEW.with_borrow(|view| view.expanded().clone());
+        // The first reading of an expanded app has no CPU yet, and the first frame lays it out.
+        crate::present(&ui, reader.read(crate::REFRESH, &expanded).unwrap());
+        shot.render();
+        let (mut read, mut show) = (0.0, 0.0);
+        for _ in 0..READS {
+            let start = cpu();
+            let snapshot = reader.read(crate::REFRESH, &expanded).unwrap();
+            let read_end = cpu();
+            crate::present(&ui, snapshot);
+            shot.render();
+            read += read_end - start;
+            show += cpu() - read_end;
+        }
+        let ms = |s: f64| s * 1e3 / f64::from(READS);
+        let core = 100.0 * (read + show) / f64::from(READS) / crate::REFRESH.as_secs_f64();
+        println!(
+            "BENCH {processes} processes, {label}: read {:.1} ms + show {:.1} ms per refresh, \
+             {core:.2} % of one core at {} s",
+            ms(read),
+            ms(show),
+            crate::REFRESH.as_secs()
+        );
+    }
 }

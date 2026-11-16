@@ -4,7 +4,7 @@
 //! turns two samples one refresh apart into rows whose RAM plus
 //! [`DrillDown::not_attributed`] sums to the app's RAM in use. Sizes are bytes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -169,16 +169,19 @@ pub fn drill_down(app_ram: u64, prev: &Sample, cur: &Sample, elapsed: Duration) 
     let mut groups: Vec<GroupRows> = cur
         .iter()
         .map(|(path, procs)| {
-            let before = prev.get(path).map_or(&[][..], Vec::as_slice);
+            // A group can hold thousands of processes: look them up, don't scan.
+            let before: HashMap<(u32, u64), u64> = prev
+                .get(path)
+                .into_iter()
+                .flatten()
+                .map(|b| ((b.pid, b.start_time), b.cpu_ticks))
+                .collect();
             let mut processes: Vec<ProcessRow> = procs
                 .iter()
                 .map(|p| {
-                    let cpu_cores = match before
-                        .iter()
-                        .find(|b| b.pid == p.pid && b.start_time == p.start_time)
-                    {
-                        Some(b) if secs > 0.0 => {
-                            p.cpu_ticks.saturating_sub(b.cpu_ticks) as f64 / TICKS_PER_SEC / secs
+                    let cpu_cores = match before.get(&(p.pid, p.start_time)) {
+                        Some(&ticks) if secs > 0.0 => {
+                            p.cpu_ticks.saturating_sub(ticks) as f64 / TICKS_PER_SEC / secs
                         }
                         _ => 0.0,
                     };

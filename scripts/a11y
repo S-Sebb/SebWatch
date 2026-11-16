@@ -77,6 +77,7 @@ kill -0 "${pids[-1]}" 2>/dev/null || { echo "FAIL app exited (see $logs/a11y-app
 timeout 60 python3 -I - "$logs/a11y-tree.txt" <<'EOF'
 import sys, time
 import pyatspi
+from gi.repository import GLib
 
 out = open(sys.argv[1], "w")
 app = next((a for a in pyatspi.Registry.getDesktop(0) if a and a.name.lower().startswith("sebwatch")), None)
@@ -88,11 +89,14 @@ nodes = []
 def walk(node, depth):
     if node is None:
         return
-    states = node.getState()
-    names = [name for s, name in [(pyatspi.STATE_FOCUSED, "focused"), (pyatspi.STATE_SELECTED, "selected"),
-             (pyatspi.STATE_CHECKED, "checked")] if states.contains(s)]
-    entry = dict(role=node.getRoleName(), name=node.name, description=node.description,
-                 states=names, node=node)
+    try:
+        states = node.getState()
+        names = [name for s, name in [(pyatspi.STATE_FOCUSED, "focused"), (pyatspi.STATE_SELECTED, "selected"),
+                 (pyatspi.STATE_CHECKED, "checked")] if states.contains(s)]
+        entry = dict(role=node.getRoleName(), name=node.name, description=node.description,
+                     states=names, node=node)
+    except GLib.Error:  # gone mid-walk: a refresh replaced the rows out of sight
+        return
     nodes.append(entry)
     out.write("  " * depth + f"[{entry['role']}] {entry['name']!r}"
               + (f" description={entry['description']!r}" if entry["description"] else "")
