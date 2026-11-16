@@ -215,12 +215,16 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("leftover-row-{name}.png")),
         );
-        // #41: the "RAM in use" header hovered, two rows and a header's half above the app's row.
+        // #41: a header hovered ("RAM in use", "Swapped out" in SebChat's wider table), two rows
+        // and a header's half above the app's row.
         let header = (swatch as u32 / shot.width) as f32 - 5.0 - 1.5 * row - 14.0;
         shot.pointer(4.0, 4.0, false);
         shot.pointer(440.0, header, false);
         shot.wait(Duration::from_millis(800));
-        shot.save(&shot.render(), &dir.join(format!("about-ram-{name}.png")));
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("about-header-{name}.png")),
+        );
 
         // Closed apps hovered: the segment after Other apps, grey too, so the rightmost pixel
         // of that grey; and its row expanded in a window tall enough for the whole table.
@@ -417,6 +421,12 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("focus-header-{name}.png")),
         );
+        shot.tap(Key::RightArrow);
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("focus-header-intel-{name}.png")),
+        );
+        shot.tap(Key::LeftArrow);
         shot.tap(Key::Return);
         assert_eq!(ui.get_sort_column(), 4);
         ui.invoke_sort_clicked(0);
