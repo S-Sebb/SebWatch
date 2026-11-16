@@ -41,5 +41,4 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   columns (#10). The Name column stays fixed while the value columns scroll sideways (#56).
   Explanations on headers and tiles are one short sentence each, concise and clear, without
   "not X" asides such as "not disk space" (#41). VRAM is "dedicated GPU memory", never
-  "NVIDIA GPU memory". Foreground testing stopped: tests must not open windows on or take focus
-  from Seb's desktop (Seb, 2026-11-16).
+  "NVIDIA GPU memory".
