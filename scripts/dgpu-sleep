@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Does SebWatch, open and visible, keep an idle NVIDIA dGPU from runtime-suspending? (#23)
+# Wakes the dGPU once with nvidia-smi and times how long it takes to reach `suspended`, first
+# without SebWatch, then with the release app open on the desktop (its window must stay visible:
+# a hidden window reads nothing). Stops KDE's ksystemstats (its `nvidia-smi dmon` holds the GPU)
+# for the run and restarts it on exit. Needs nothing else holding the dGPU: no monitor on its
+# outputs, hwlog.service stopped, no app with /dev/nvidia* open. One line per check, logs in
+# target/logs/. Usage: scripts/dgpu-sleep [seconds to wait for suspend, default 60]
+set -u
+cd "$(dirname "$0")/.."
+
+logs=$PWD/target/logs
+mkdir -p "$logs"
+limit=${1:-60}
+fail=0
+
+gpu=
+for d in /sys/bus/pci/devices/*; do
+    if [ "$(cat "$d/vendor")" = 0x10de ] && grep -q '^0x03' "$d/class"; then gpu=$d; break; fi
+done
+[ -n "$gpu" ] || { echo "MISSING: no NVIDIA GPU"; exit 1; }
+status() { cat "$gpu/power/runtime_status"; }
+holders() { fuser /dev/nvidia* 2>/dev/null | tr -s ' ' '\n' | sort -u | grep -v '^$'; }
+names() { for p in "$@"; do printf '%s(%s) ' "$(cat /proc/"$p"/comm 2>/dev/null)" "$p"; done; }
+
+# Preconditions: everything except ksystemstats, which the script stops itself.
+[ "$(cat "$gpu/power/control")" = auto ] || { echo "MISSING: runtime PM off ($gpu/power/control)"; exit 1; }
+card=$(basename "$(ls -d "$gpu"/drm/card* | head -1)")
+for c in /sys/class/drm/"$card"-*; do
+    [ "$(cat "$c/status")" = connected ] && { echo "MISSING: a monitor is on the dGPU's $(basename "$c")"; exit 1; }
+done
+systemctl is-active -q hwlog.service && { echo "MISSING: hwlog.service runs nvidia-smi every second; stop it"; exit 1; }
+ksys=$(systemctl --user show -p MainPID --value plasma-ksystemstats.service)
+others=$(holders | while read -r p; do
+    [ "$(ps -o ppid= -p "$p" | tr -d ' ')" = "$ksys" ] || echo "$p"
+done)
+[ -z "$others" ] || { echo "MISSING: these hold the dGPU: $(names $others)"; exit 1; }
+command -v nvidia-smi >/dev/null || { echo "MISSING: nvidia-smi"; exit 1; }
+
+timeout 900 cargo build --release -p sebwatch >"$logs/dgpu-build.log" 2>&1 ||
+    { echo "FAIL build (see $logs/dgpu-build.log)"; exit 1; }
+
+app=
+cleanup() {
+    [ -n "$app" ] && kill "$app" 2>/dev/null
+    systemctl --user start plasma-ksystemstats.service
+}
+trap cleanup EXIT
+systemctl --user stop plasma-ksystemstats.service
+
+# Seconds from a wake until `suspended`, or empty after $limit s. Logs status each second.
+time_to_suspend() {
+    nvidia-smi -L >/dev/null
+    local start=$SECONDS
+    while [ $((SECONDS - start)) -lt "$limit" ]; do
+        echo "$(date +%T) $(status) holders: $(names $(holders))" >>"$logs/dgpu-$1.log"
+        [ "$(status)" = suspended ] && { echo $((SECONDS - start)); return; }
+        sleep 1
+    done
+}
+
+: >"$logs/dgpu-baseline.log"
+t=$(time_to_suspend baseline)
+if [ -z "$t" ]; then
+    echo "FAIL baseline: not suspended ${limit}s after a wake without SebWatch (see $logs/dgpu-baseline.log)"
+    exit 1
+fi
+echo "PASS baseline: suspended ${t}s after a wake without SebWatch"
+
+target/release/sebwatch >"$logs/dgpu-app.log" 2>&1 &
+app=$!
+sleep 5
+if holders | grep -qx "$app"; then
+    echo "FAIL render: SebWatch itself opened /dev/nvidia* (draws on the dGPU)"; fail=1
+else
+    echo "PASS render: SebWatch draws without opening the dGPU"
+fi
+
+: >"$logs/dgpu-sebwatch.log"
+t=$(time_to_suspend sebwatch)
+if [ -z "$t" ]; then
+    echo "FAIL polling: not suspended ${limit}s after a wake with SebWatch open (see $logs/dgpu-sebwatch.log)"; fail=1
+else
+    echo "PASS polling: suspended ${t}s after a wake with SebWatch open"
+    # Asleep, SebWatch must leave it so: it reads only sysfs then.
+    sleep 20
+    if [ "$(status)" = suspended ]; then
+        echo "PASS stays asleep: still suspended 20s later with SebWatch open"
+    else
+        echo "FAIL stays asleep: woke within 20s with SebWatch open"; fail=1
+    fi
+fi
+exit "$fail"
