@@ -240,13 +240,19 @@ component BarView {
     VerticalLayout {
         spacing: 5px;
         HorizontalLayout {
-            SectionTitle {
+            title := SectionTitle {
                 text: root.bar.title;
             }
             Muted {
                 text: root.bar.total;
                 horizontal-alignment: right;
                 vertical-alignment: bottom;
+            }
+            // After the total: the menu button in the bars card's top-right corner. As high as the
+            // title, so a taller button hangs over the header instead of deepening it.
+            HorizontalLayout {
+                height: title.preferred-height;
+                @children
             }
         }
         SegmentBar {
@@ -293,7 +299,9 @@ component BarView {
 
 component TileView inherits Card {
     in property <Tile> tile;
-    inset: 12px;
+    inset: Theme.picnic ? 12px : 0;
+    // The graph runs to the frame's corners.
+    clip-content: true;
     // AT-SPI (AccessKit 0.24) passes on no text values, so the value is the description.
     accessible-role: groupbox;
     accessible-label: self.tile.name;
@@ -301,11 +309,6 @@ component TileView inherits Card {
     // Every tile the same size, graph or not, sharing out the bars' height.
     vertical-stretch: 1;
     Rectangle {
-        background: Theme.picnic ? transparent : Theme.view;
-        border-width: Theme.picnic ? 0 : 1px;
-        border-color: Theme.line;
-        border-radius: 5px;
-        clip: true;
         VerticalLayout {
             padding-top: Theme.picnic ? 0 : 7px;
             // Breeze keeps a near-zero line clear of the tile's border.
@@ -892,9 +895,10 @@ component Table {
     VerticalLayout {
         // The search line above the table, as in KDE System Monitor; SebChat titles it "Apps".
         HorizontalLayout {
-            padding-left: Theme.picnic ? 14px : 16px;
+            padding-top: Theme.picnic ? 0 : 10px;
+            padding-left: Theme.picnic ? 14px : 12px;
             padding-right: self.padding-left;
-            padding-bottom: 8px;
+            padding-bottom: Theme.picnic ? 8px : 10px;
             spacing: 12px;
             if Theme.picnic: SectionTitle {
                 text: "Apps";
@@ -1127,13 +1131,14 @@ export component MainWindow inherits Window {
     preferred-width: 1000px;
     preferred-height: 850px;
     min-width: 760px;
-    // The bars' width: the window less the page's padding, the tiles' column and the card's inset.
     // A window wide enough for the tiles two by two beside one-line legends.
     property <bool> wide: self.width >= 1400px;
-    property <length> tiles-width: self.wide ? 2 * 180px + (Theme.picnic ? 14px : 8px) : 180px;
-    // The bars' width: the window less the page's padding, the tiles, the menu button, the gaps
-    // between them and the card's inset.
-    property <length> bar-width: self.width - 32px - 2 * (Theme.picnic ? 22px : 16px) - self.tiles-width - 30px - (Theme.picnic ? 28px : 0);
+    // Every card's outer margin is 16 px; the gap between cards is the tiles' gap.
+    property <length> gap: Theme.picnic ? 14px : 8px;
+    property <length> tiles-width: self.wide ? 2 * 180px + self.gap : 180px;
+    property <length> bars-inset: Theme.picnic ? 14px : 12px;
+    // The bars' width: the window less the page's margins, the tiles, the gap and the card's inset.
+    property <length> bar-width: self.width - 32px - self.tiles-width - self.gap - 2 * self.bars-inset;
     min-height: 480px;
     background: Theme.bg;
     default-font-family: Theme.font;
@@ -1172,12 +1177,10 @@ export component MainWindow inherits Window {
             content := VerticalLayout {
                 width: page.visible-width;
                 height: page.content-height;
-                padding-top: 14px;
-                spacing: Theme.picnic ? 22px : 14px;
+                padding: 16px;
+                spacing: root.gap;
                 // Readings failing: KDE's inline warning (KMessageWidget) above the bars.
                 if root.warning != "": HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
                     Rectangle {
                         accessible-role: text;
                         accessible-label: "Warning";
@@ -1224,9 +1227,7 @@ export component MainWindow inherits Window {
                     }
                 }
                 HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    spacing: Theme.picnic ? 22px : 16px;
+                    spacing: root.gap;
                     vertical-stretch: 0;
                     // As short as the taller of the tiles and the bars allow, leaving the rest
                     // to the table.
@@ -1235,7 +1236,7 @@ export component MainWindow inherits Window {
                     // as the bars; they share out the bars' height when the bars are taller.
                     GridLayout {
                         width: root.tiles-width;
-                        spacing: Theme.picnic ? 14px : 8px;
+                        spacing: root.gap;
                         for tile[i] in root.tiles: TileView {
                             tile: tile;
                             // Fixed: the grid would otherwise give the columns unequal widths.
@@ -1247,9 +1248,21 @@ export component MainWindow inherits Window {
                     // The bars' card runs as deep as the tiles beside it; the bars share out
                     // the spare height in equal gaps, so the last legend ends on the card's edge.
                     Card {
+                        inset: root.bars-inset;
                         BarView {
                             bar: root.memory;
                             bar-width: root.bar-width;
+                            // Hangs 6 px into the card's inset.
+                            Rectangle {
+                                width: 30px;
+                                MenuButton {
+                                    x: 6px;
+                                    y: (parent.height - self.height) / 2;
+                                    chosen(choice) => {
+                                        root.theme-chosen(choice);
+                                    }
+                                }
+                            }
                         }
                         Rectangle {
                             min-height: Theme.picnic ? 18px : 14px;
@@ -1268,49 +1281,36 @@ export component MainWindow inherits Window {
                             bar-width: root.bar-width;
                         }
                     }
-                    VerticalLayout {
-                        vertical-stretch: 0;
-                        MenuButton {
-                            chosen(choice) => {
-                                root.theme-chosen(choice);
-                            }
-                        }
-                        Rectangle { }
-                    }
                 }
-                // Breeze: the table runs edge to edge. SebChat: a card like the others.
-                HorizontalLayout {
-                    padding-left: Theme.picnic ? 16px : 0;
-                    padding-right: Theme.picnic ? 19px : 0;
-                    padding-bottom: Theme.picnic ? 19px : 0;
+                // The Apps card: the search line, then the table clipped to the card's corners.
+                Card {
+                    inset: 0;
+                    clip-content: true;
                     vertical-stretch: 1;
-                    Card {
-                        inset: 0;
-                        VerticalLayout {
-                            padding-top: Theme.picnic ? 12px : 0;
-                            padding-bottom: Theme.picnic ? 6px : 0;
-                            padding-left: Theme.picnic ? 3px : 0;
-                            padding-right: Theme.picnic ? 3px : 0;
-                            table := Table {
-                                rows: root.rows;
-                                unsplit: root.unsplit;
-                                current: root.current;
-                                sort-column: root.sort-column;
-                                sort-ascending: root.sort-ascending;
-                                pick(index) => {
-                                    root.pick(index);
-                                }
-                                key(key) => {
-                                    root.key(key);
-                                }
-                                sort(column) => {
-                                    root.sort-clicked(column);
-                                }
-                                filtered: root.filtered;
-                                search <=> root.search;
-                                searched(text) => {
-                                    root.searched(text);
-                                }
+                    VerticalLayout {
+                        padding-top: Theme.picnic ? 12px : 0;
+                        padding-bottom: Theme.picnic ? 6px : 0;
+                        padding-left: Theme.picnic ? 3px : 0;
+                        padding-right: Theme.picnic ? 3px : 0;
+                        table := Table {
+                            rows: root.rows;
+                            unsplit: root.unsplit;
+                            current: root.current;
+                            sort-column: root.sort-column;
+                            sort-ascending: root.sort-ascending;
+                            pick(index) => {
+                                root.pick(index);
+                            }
+                            key(key) => {
+                                root.key(key);
+                            }
+                            sort(column) => {
+                                root.sort-clicked(column);
+                            }
+                            filtered: root.filtered;
+                            search <=> root.search;
+                            searched(text) => {
+                                root.searched(text);
                             }
                         }
                     }
