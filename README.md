@@ -51,9 +51,24 @@
 |---|---|
 | **Linux** with cgroup v2 and a systemd user session | Each app the desktop starts runs in its own group, which is what SebWatch reads |
 | **NVIDIA driver** (optional) | For GPU and VRAM readings; without it the VRAM bar and the GPU and VRAM tiles are hidden, and the table shows — in their columns |
-| **Rust** (stable) and the fontconfig and xkbcommon development packages | To build it: `fontconfig-devel libxkbcommon-devel` on Fedora |
+| **Rust** (stable) and the fontconfig and xkbcommon development packages | Only to build it yourself: `fontconfig-devel libxkbcommon-devel` on Fedora |
 
-There are no packages yet. From a checkout:
+Each [release](https://github.com/S-Sebb/SebWatch/releases) has two packages:
+
+- **Fedora and Nobara:** the `.rpm`. Install it with dnf, which brings the libraries it needs,
+  and remove it with `sudo dnf remove sebwatch`:
+
+  ```sh
+  sudo dnf install https://github.com/S-Sebb/SebWatch/releases/download/v0.1.0/sebwatch-0.1.0-1.x86_64.rpm
+  ```
+
+- **Any other distribution:** the AppImage. Make it executable and run it:
+
+  ```sh
+  chmod +x SebWatch-0.1.0-x86_64.AppImage && ./SebWatch-0.1.0-x86_64.AppImage
+  ```
+
+Or build it from a checkout:
 
 ```sh
 scripts/install      # builds a release and installs it into ~/.local

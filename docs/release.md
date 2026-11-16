@@ -7,9 +7,27 @@ Every release ships with patch notes.
 1. Bump `version` under `[workspace.package]` in the root `Cargo.toml` and commit the
    updated `Cargo.lock`, by PR to `main`.
 2. Write the patch notes in the format below.
-3. Tag the merged commit on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4. Create the GitHub release with the patch notes as its body:
-   `gh release create vX.Y.Z --title "SebWatch X.Y.Z" --notes-file <notes.md>`.
+3. Create the GitHub release as a draft, with the patch notes as its body:
+   `gh release create vX.Y.Z --draft --title "SebWatch X.Y.Z" --notes-file <notes.md>`.
+4. Tag the merged commit on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag starts
+   the `Release packages` workflow (`.github/workflows/release.yml`): it builds
+   `sebwatch-X.Y.Z-1.x86_64.rpm` on Fedora and `SebWatch-X.Y.Z-x86_64.AppImage` on the oldest
+   supported Ubuntu, tests both in clean Fedora and Ubuntu containers (`scripts/test-packages`)
+   and attaches them to the draft. Without a release for the tag it makes a draft with empty
+   notes; it never publishes.
+5. Once both packages are attached, publish it: `gh release edit vX.Y.Z --draft=false`.
+
+## Packages
+
+- `scripts/package rpm` (on Fedora, with `rpm-build`) or `scripts/package appimage` builds a
+  package into `target/packages/`; `scripts/test-packages` tests both there. The rpm follows
+  `packaging/sebwatch.spec`, the AppImage is made by a pinned linuxdeploy.
+- The rpm installs with `sudo dnf install ./sebwatch-X.Y.Z-1.x86_64.rpm` or from the release
+  URL, and removes with `sudo dnf remove sebwatch`. The AppImage runs where it is, after
+  `chmod +x`.
+- To build and test both without a release, run the workflow by hand (Actions, `Release
+  packages`, Run workflow): the packages stay as that run's artifacts. A PR that changes the
+  packaging runs it too.
 
 ## Patch-note format
 
