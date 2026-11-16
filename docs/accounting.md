@@ -37,8 +37,27 @@ parent's group, so a build an agent starts is charged to that agent.
 | File cache | `file - shmem` (freed on demand, shown apart) |
 | Swapped out | `memory.swap.current` |
 
-Per-process numbers in the drill-down use PSS from `/proc/<pid>/smaps_rollup`, so shared pages
-are split rather than counted twice.
+## Drill-down: processes inside an app
+
+Read only for expanded apps (`crates/core/src/processes.rs`), from each of the app's groups'
+`cgroup.procs`. Per-process memory is PSS from `/proc/<pid>/smaps_rollup`, so shared pages are
+split rather than counted twice.
+
+| Column | Source |
+|---|---|
+| Name, PID | `/proc/<pid>/stat` `comm` |
+| RAM | `Pss_Anon + Pss_Shmem` (the per-process part of RAM in use; file pages are file cache) |
+| Swapped out | `SwapPss` |
+| CPU | `utime + stime` from `/proc/<pid>/stat`, two reads one refresh apart, in cores |
+
+- An app of several groups shows each group with its sums over its processes.
+- **Kernel memory and zswap (not per process)**: the app's RAM in use minus its processes'
+  RAM, so the rows sum to the app's total. It holds the group's `kernel` and `zswap`, which no
+  process owns (on a live system the processes' PSS matched each group's `anon` within 1%).
+  Floored at 0: PSS splits pages shared with other apps, which the cgroup charges to one.
+- A process that exits between reads is dropped; a new process, or a PID reused by a new
+  process (different start time), shows zero CPU for one refresh. Another user's process
+  whose `smaps_rollup` can't be read shows CPU but no memory.
 
 ## System rows (`/proc/meminfo`, kB)
 
