@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
-use slint::{ComponentHandle, ModelRc, RenderingState, VecModel, Weak};
+use slint::{ComponentHandle, Model, ModelRc, RenderingState, VecModel, Weak};
 
 slint::include_modules!();
 
@@ -39,14 +39,38 @@ fn show(window: &MainWindow, shown: model::Shown) {
     window.set_has_vram(shown.vram.is_some());
     window.set_vram(shown.vram.unwrap_or_default());
     window.global::<Columns>().set_igpu(shown.igpu.into());
-    window.set_tiles(ModelRc::from(Rc::new(VecModel::from(shown.tiles))));
-    window.set_rows(ModelRc::from(Rc::new(VecModel::from(shown.rows))));
+    if let Some(new) = refill(&window.get_tiles(), shown.tiles) {
+        window.set_tiles(new);
+    }
+    if let Some(new) = refill(&window.get_rows(), shown.rows) {
+        window.set_rows(new);
+    }
     window.set_sort_column(shown.sort.column as i32);
     window.set_sort_ascending(shown.sort.ascending);
     window.set_filtered(shown.filtered.into());
     window.set_current(shown.focus);
     window.set_warning(shown.warning.into());
     window.set_unsplit(shown.unsplit);
+}
+
+/// Puts `items` into `model` in place, changing only the items that differ, so the window keeps
+/// the items it made for them and a screen reader keeps its place (a new model rebuilds them all
+/// on every refresh). A new model when `model` is the window's initial empty one.
+fn refill<T: Clone + PartialEq + 'static>(model: &ModelRc<T>, items: Vec<T>) -> Option<ModelRc<T>> {
+    let Some(model) = model.as_any().downcast_ref::<VecModel<T>>() else {
+        return Some(ModelRc::from(Rc::new(VecModel::from(items))));
+    };
+    for _ in items.len()..model.row_count() {
+        model.remove(model.row_count() - 1);
+    }
+    let kept = model.row_count();
+    for (i, item) in items.iter().take(kept).enumerate() {
+        if model.row_data(i).as_ref() != Some(item) {
+            model.set_row_data(i, item.clone());
+        }
+    }
+    model.extend(items.into_iter().skip(kept));
+    None
 }
 
 /// Shows a new reading.
@@ -240,4 +264,18 @@ fn main() -> Result<(), slint::PlatformError> {
     std::thread::spawn(move || read_loop(reader, toggles, drawn, weak));
 
     window.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use slint::{Model, ModelRc};
+
+    #[test]
+    fn refill_keeps_the_model_across_growing_and_shrinking() {
+        let model: ModelRc<i32> = super::refill(&ModelRc::default(), vec![1, 2]).unwrap();
+        for items in [vec![1, 3, 4, 5], vec![6], vec![]] {
+            assert!(super::refill(&model, items.clone()).is_none());
+            assert_eq!(model.iter().collect::<Vec<_>>(), items);
+        }
+    }
 }
