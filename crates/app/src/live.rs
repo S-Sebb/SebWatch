@@ -38,7 +38,7 @@ impl Reader {
         let root = Path::new(CGROUP_ROOT);
         let mem = memory::read(root, Path::new(PROC_ROOT))?;
         let now = Instant::now();
-        let sample = cpu_io::read_sample(root)?;
+        let sample = cpu_io::read_sample(root, mem.apps.iter().flat_map(|a| &a.cgroups));
         let rates = match &self.last {
             Some((then, before)) => cpu_io::rates(before, &sample, now - *then),
             None => BTreeMap::new(),

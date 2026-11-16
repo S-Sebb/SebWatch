@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -25,12 +24,13 @@ pub struct Rates {
     pub write_bytes_per_sec: f64,
 }
 
-/// Reads the counters of every group under `root` that has processes (see
-/// [`crate::cgroup::groups_with_processes`]). A group that vanishes mid-read is left out.
-pub fn read_sample(root: &Path) -> io::Result<Sample> {
+/// Reads the counters of `groups`, paths relative to `root` (the groups with processes, see
+/// [`crate::cgroup::groups_with_processes`]; the app passes those of the memory reading, so the
+/// hierarchy is walked once per refresh). A group that vanishes mid-read is left out.
+pub fn read_sample<'a>(root: &Path, groups: impl IntoIterator<Item = &'a PathBuf>) -> Sample {
     let mut sample = Sample::new();
-    for rel in crate::cgroup::groups_with_processes(root)? {
-        let dir = root.join(&rel);
+    for rel in groups {
+        let dir = root.join(rel);
         let Some(usage_usec) = fs::read_to_string(dir.join("cpu.stat"))
             .ok()
             .and_then(|s| parse_usage_usec(&s))
@@ -41,7 +41,7 @@ pub fn read_sample(root: &Path) -> io::Result<Sample> {
         let (read_bytes, write_bytes) =
             fs::read_to_string(dir.join("io.stat")).map_or((0, 0), |s| parse_io_stat(&s));
         sample.insert(
-            rel,
+            rel.clone(),
             Counters {
                 usage_usec,
                 read_bytes,
@@ -49,7 +49,7 @@ pub fn read_sample(root: &Path) -> io::Result<Sample> {
             },
         );
     }
-    Ok(sample)
+    sample
 }
 
 fn parse_usage_usec(cpu_stat: &str) -> Option<u64> {
@@ -96,6 +96,7 @@ pub fn rates(prev: &Sample, cur: &Sample, elapsed: Duration) -> BTreeMap<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cgroup::groups_with_processes;
 
     struct Fixture(PathBuf);
 
@@ -146,7 +147,7 @@ mod tests {
             Some("8:0 rbytes=1000 wbytes=0 rios=1 wios=0\n259:0 rbytes=0 wbytes=500\n"),
         );
         fx.group("system.slice/old.service", "200\n", 5_000_000, None);
-        let first = read_sample(&fx.0).unwrap();
+        let first = read_sample(&fx.0, &groups_with_processes(&fx.0).unwrap());
 
         fx.group(
             app,
@@ -162,7 +163,7 @@ mod tests {
             50_000_000,
             Some("8:0 rbytes=1000000 wbytes=1000000\n"),
         );
-        let second = read_sample(&fx.0).unwrap();
+        let second = read_sample(&fx.0, &groups_with_processes(&fx.0).unwrap());
 
         let r = rates(&first, &second, Duration::from_secs(2));
         let keys: Vec<_> = r.keys().map(|k| k.to_str().unwrap()).collect();

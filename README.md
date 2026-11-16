@@ -83,8 +83,8 @@ Top to bottom:
 
 ## Footprint
 
-With the window open, SebWatch uses about 2 % of one CPU core and about 130 MB of memory, half of
-it the graphics driver every GPU-drawn window loads. Minimised or hidden, it reads nothing and uses
+With the window open, SebWatch uses about 2.3 % of one CPU core and 100 to 125 MB of memory,
+most of it the graphics driver every GPU-drawn window loads. Minimised or hidden, it reads nothing and uses
 no CPU. `scripts/bench` measures it; [docs/design.md](docs/design.md#footprint) has the details.
 
 ## Build from source

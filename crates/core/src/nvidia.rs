@@ -26,7 +26,6 @@ pub struct Gpu {
     pub vram_total_bytes: u64,
     /// Device busy %, None where the driver doesn't report it.
     pub utilization_percent: Option<u32>,
-    pub power_milliwatts: Option<u32>,
     /// Keyed by cgroup path relative to the cgroup root, like `cpu_io`.
     pub apps: BTreeMap<PathBuf, AppUsage>,
 }
@@ -188,10 +187,6 @@ impl Nvml {
                 self.sym(b"nvmlDeviceGetUtilizationRates\0")?;
             let mut util = Utilization::default();
             let utilization_percent = (rates(dev, &mut util) == SUCCESS).then_some(util.gpu);
-            let power: unsafe extern "C" fn(Device, *mut c_uint) -> Ret =
-                self.sym(b"nvmlDeviceGetPowerUsage\0")?;
-            let mut mw = 0;
-            let power_milliwatts = (power(dev, &mut mw) == SUCCESS).then_some(mw);
 
             let mut procs = BTreeMap::<u32, ProcUsage>::new();
             for name in [
@@ -236,7 +231,6 @@ impl Nvml {
                 vram_used_bytes: mem.used,
                 vram_total_bytes: mem.total,
                 utilization_percent,
-                power_milliwatts,
                 apps: BTreeMap::new(),
             };
             Some((gpu, procs))
