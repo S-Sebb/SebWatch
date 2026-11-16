@@ -27,16 +27,15 @@ Android emulators never appear.
 
 Top to bottom:
 
-1. **Summary in plain words**, e.g. "RAM is nearly full: 1.3 GB available of 15.3 GB. The
-   biggest user is Claude agents (3.8 GB), then Android emulator (2.9 GB). Apps waited for
-   memory 14% of the last 10 s."
-2. **RAM bar** that sums to total RAM: the top apps in fixed colors, then other apps, zswap
+1. **RAM bar** that sums to total RAM: the top apps in fixed colors, then other apps, zswap
    pool, file cache (hatched: freed on demand), kernel and drivers, free. Hovering a segment
    names it.
-3. **Swap bar**: how much of each app sits in swap.
+2. **Swap bar**: how much of each app sits in swap.
+3. **VRAM bar** (NVIDIA only): each app's VRAM, driver and other, free. Empty with "GPU asleep"
+   while the GPU sleeps.
 4. **App table**: name and icon, RAM in use, swapped out, file cache, CPU (cores), disk, GPU
    and VRAM. Sorted by RAM. Expanding an app shows its processes and child groups.
-5. A row of small headline tiles for CPU, GPU and disk may sit beside or above the bars.
+5. Small headline tiles for CPU, GPU, VRAM and disk beside the bars, under the menu button.
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.
 

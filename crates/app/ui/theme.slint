@@ -1,0 +1,294 @@
+// The three looks: Breeze Light and Breeze Dark, drawn to sit beside the KDE apps, and SebChat's
+// Picnic pixel look (cream cards in notched brown frames on a checkered cloth).
+// Fonts: Breeze uses the desktop's sans (Noto Sans on Plasma); SebChat bundles Nunito and Jersey 10.
+
+import "../fonts/Nunito-Bold.ttf";
+import "../fonts/Nunito-ExtraBold.ttf";
+import "../fonts/Jersey10-Regular.ttf";
+
+export enum ThemeChoice { system, light, dark, sebchat }
+
+// Drawn in Rust (art.rs).
+export global Art {
+    // SebChat's picnic cloth tile, three image pixels per cloth pixel.
+    in property <image> cloth;
+    // A diagonal stripe mask for the file cache segment, coloured by the theme.
+    in property <image> hatch;
+}
+
+export global Theme {
+    in-out property <ThemeChoice> choice;
+    // The desktop's light/dark preference, from the freedesktop portal.
+    in property <bool> desktop-dark;
+
+    out property <bool> picnic: self.choice == ThemeChoice.sebchat;
+    out property <bool> dark: !self.picnic && (self.choice == ThemeChoice.dark || (self.choice == ThemeChoice.system && self.desktop-dark));
+
+    out property <color> bg: self.picnic ? #FBE9D6 : self.dark ? #202326 : #eff0f1;
+    out property <color> view: self.picnic ? #FFF7E8 : self.dark ? #141618 : #ffffff;
+    out property <color> alt: self.picnic ? #FFF7E8 : self.dark ? #1d1f22 : #f7f7f7;
+    out property <color> fg: self.picnic ? #4A2F22 : self.dark ? #fcfcfc : #232629;
+    out property <color> muted: self.picnic ? #73533F : self.dark ? #a1a9b1 : #707d8a;
+    out property <color> line: self.picnic ? #ECD0AE : self.dark ? #3a3f45 : #cdd0d3;
+    out property <color> selection: self.picnic ? #FDE0E6 : self.dark ? #3daee947 : #3daee938;
+    out property <color> accent: self.picnic ? #B8445F : #3daee9;
+    out property <color> track: self.picnic ? #ECD0AE : self.dark ? #33383d : #d4d7da;
+    out property <color> popup: self.picnic ? #FFF7E8 : self.dark ? #292c30 : #fcfcfc;
+    out property <color> hover: self.picnic ? #FDE0E6 : self.dark ? #3daee926 : #3daee91f;
+    out property <color> outline: #5B331C;
+
+    // Bar segments: the five apps' series colours, then the fixed parts, each with its ink.
+    out property <[color]> series: self.dark ? [#3987e5, #d95926, #199e70, #c98500, #d55181] : [#2a78d6, #eb6834, #1baf7a, #eda100, #e87ba4];
+    out property <[color]> series-ink: self.picnic ? [#ffffff, #4A2F22, #4A2F22, #4A2F22, #4A2F22] : self.dark ? [#232629, #232629, #232629, #232629, #ffffff] : [#ffffff, #232629, #232629, #232629, #232629];
+    out property <color> other: self.picnic ? #C9AD8E : self.dark ? #6b737b : #a7adb3;
+    out property <color> other-ink: self.fg;
+    out property <color> zswap: self.picnic ? #8A6A55 : self.dark ? #959ea8 : #5d6670;
+    out property <color> zswap-ink: self.dark ? #232629 : #ffffff;
+    out property <color> cache: self.picnic ? #F3DFC4 : self.dark ? #2f3439 : #dfe1e4;
+    out property <color> hatch: self.picnic ? #C9A27E : self.dark ? #5f6870 : #9aa1a8;
+    out property <color> kernel: self.picnic ? #5B331C : self.dark ? #c8cdd2 : #404850;
+    out property <color> kernel-ink: self.picnic ? #FFF7E8 : self.dark ? #232629 : #ffffff;
+
+    // Breeze: the desktop's 10 pt sans. SebChat: Nunito Bold at 13 px.
+    out property <string> font: self.picnic ? "Nunito" : "";
+    out property <int> weight: self.picnic ? 700 : 400;
+    out property <length> font-size: self.picnic ? 13px : 13.33px;
+    out property <length> small: 12px;
+    // Section titles: Breeze bold body text, SebChat Jersey 10.
+    out property <string> title-font: self.picnic ? "Jersey 10" : "";
+    out property <length> title-size: self.picnic ? 24px : self.font-size;
+    out property <int> title-weight: self.picnic ? 400 : 700;
+    // Square corners in SebChat.
+    out property <length> radius: self.picnic ? 0 : 4px;
+}
+
+// Bar segment kinds, in the RAM bar's order after the apps.
+export enum SegmentKind { app, other, zswap, cache, kernel, free }
+
+export component Swatch inherits Rectangle {
+    in property <SegmentKind> kind;
+    in property <int> series;
+    in property <length> size: 10px;
+    width: self.size;
+    height: self.size;
+    border-radius: Theme.picnic ? 0 : 3px;
+    background: SegmentFill.color(self.kind, self.series);
+    border-width: self.kind == SegmentKind.free ? (Theme.picnic ? 2px : 1px) : 0;
+    border-color: Theme.muted;
+    if root.kind == SegmentKind.cache: Image {
+        width: 100%;
+        height: 100%;
+        source: Art.hatch;
+        colorize: Theme.hatch;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
+    }
+}
+
+export global SegmentFill {
+    public pure function color(kind: SegmentKind, series: int) -> color {
+        if kind == SegmentKind.app {
+            return Theme.series[series];
+        }
+        if kind == SegmentKind.other {
+            return Theme.other;
+        }
+        if kind == SegmentKind.zswap {
+            return Theme.zswap;
+        }
+        if kind == SegmentKind.cache {
+            return Theme.cache;
+        }
+        if kind == SegmentKind.kernel {
+            return Theme.kernel;
+        }
+        return transparent;
+    }
+    public pure function ink(kind: SegmentKind, series: int) -> color {
+        if kind == SegmentKind.app {
+            return Theme.series-ink[series];
+        }
+        if kind == SegmentKind.other {
+            return Theme.other-ink;
+        }
+        if kind == SegmentKind.zswap {
+            return Theme.zswap-ink;
+        }
+        if kind == SegmentKind.kernel {
+            return Theme.kernel-ink;
+        }
+        return Theme.fg;
+    }
+}
+
+// A dashed outline, for free RAM and free swap.
+export component Dashed {
+    in property <length> thickness: Theme.picnic ? 2px : 1px;
+    in property <length> dash: Theme.picnic ? 6px : 4px;
+    in property <color> color: Theme.muted;
+    for i in Math.ceil(root.width / (2 * root.dash)): Rectangle {
+        x: i * 2 * root.dash;
+        width: Math.min(root.dash, root.width - self.x);
+        y: 0;
+        height: root.thickness;
+        background: root.color;
+    }
+    for i in Math.ceil(root.width / (2 * root.dash)): Rectangle {
+        x: i * 2 * root.dash;
+        width: Math.min(root.dash, root.width - self.x);
+        y: root.height - root.thickness;
+        height: root.thickness;
+        background: root.color;
+    }
+    for i in Math.ceil(root.height / (2 * root.dash)): Rectangle {
+        y: i * 2 * root.dash;
+        height: Math.min(root.dash, root.height - self.y);
+        x: 0;
+        width: root.thickness;
+        background: root.color;
+    }
+    for i in Math.ceil(root.height / (2 * root.dash)): Rectangle {
+        y: i * 2 * root.dash;
+        height: Math.min(root.dash, root.height - self.y);
+        x: root.width - root.thickness;
+        width: root.thickness;
+        background: root.color;
+    }
+}
+
+// SebChat's notched pixel frame: an outline with the corners cut away, a highlight top-left,
+// a lowlight bottom-right and a hard drop shadow 3px past it right and below.
+// In the Breeze looks it draws nothing and adds no padding.
+export component Card {
+    in property <length> inset: 14px;
+    in property <length> gap: 0;
+    in property <color> fill: Theme.view;
+    in property <color> high: #ffffff;
+    in property <color> low: #ECD0AE;
+    property <length> w: 3px;
+
+    if Theme.picnic: Rectangle {
+        Rectangle {
+            x: root.width;
+            y: 3 * root.w;
+            width: root.w;
+            height: root.height - 2 * root.w;
+            background: #5B331C30;
+        }
+        Rectangle {
+            x: 3 * root.w;
+            y: root.height;
+            width: root.width - 2 * root.w;
+            height: root.w;
+            background: #5B331C30;
+        }
+        Rectangle {
+            x: root.width - root.w;
+            y: root.height - root.w;
+            width: root.w;
+            height: root.w;
+            background: #5B331C30;
+        }
+        Rectangle {
+            x: root.w;
+            width: root.width - 2 * root.w;
+            background: root.fill;
+        }
+        Rectangle {
+            y: root.w;
+            height: root.height - 2 * root.w;
+            background: root.fill;
+        }
+        Rectangle {
+            x: root.w;
+            y: root.height - 2 * root.w;
+            width: root.width - 2 * root.w;
+            height: root.w;
+            background: root.low;
+        }
+        Rectangle {
+            x: root.width - 2 * root.w;
+            y: root.w;
+            width: root.w;
+            height: root.height - 2 * root.w;
+            background: root.low;
+        }
+        Rectangle {
+            x: root.w;
+            y: root.w;
+            width: root.width - 2 * root.w;
+            height: root.w;
+            background: root.high;
+        }
+        Rectangle {
+            x: root.w;
+            y: root.w;
+            width: root.w;
+            height: root.height - 2 * root.w;
+            background: root.high;
+        }
+        Rectangle {
+            x: root.w;
+            y: 0;
+            width: root.width - 2 * root.w;
+            height: root.w;
+            background: Theme.outline;
+        }
+        Rectangle {
+            x: root.w;
+            y: root.height - root.w;
+            width: root.width - 2 * root.w;
+            height: root.w;
+            background: Theme.outline;
+        }
+        Rectangle {
+            x: 0;
+            y: root.w;
+            width: root.w;
+            height: root.height - 2 * root.w;
+            background: Theme.outline;
+        }
+        Rectangle {
+            x: root.width - root.w;
+            y: root.w;
+            width: root.w;
+            height: root.height - 2 * root.w;
+            background: Theme.outline;
+        }
+    }
+
+    VerticalLayout {
+        padding: Theme.picnic ? root.inset : 0;
+        spacing: root.gap;
+        @children
+    }
+}
+
+// The expand arrow: a thin Breeze chevron, or a pixel triangle in SebChat.
+export component Chevron {
+    in property <bool> open;
+    in property <color> color: Theme.picnic ? Theme.fg : Theme.muted;
+    width: 16px;
+    height: 16px;
+    if !Theme.picnic: Path {
+        width: 16px;
+        height: 16px;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: root.open ? "M 4 6 L 8 10 L 12 6" : "M 6 4 L 10 8 L 6 12";
+        stroke: root.color;
+        stroke-width: 1px;
+    }
+    // Five art pixels at 2 px each.
+    if Theme.picnic: Rectangle {
+        width: 10px;
+        height: 10px;
+        for r in 3: Rectangle {
+            x: root.open ? r * 2px : (r + 1) * 2px;
+            y: root.open ? (r + 1) * 2px : r * 2px;
+            width: root.open ? (5 - 2 * r) * 2px : 2px;
+            height: root.open ? 2px : (5 - 2 * r) * 2px;
+            background: root.color;
+        }
+    }
+}

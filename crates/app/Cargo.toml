@@ -7,7 +7,13 @@ publish.workspace = true
 
 [dependencies]
 sebwatch-core = { path = "../core" }
+zbus = "5"
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-18", "backend-winit", "renderer-femtovg", "accessibility"] }
 
 [build-dependencies]
 slint-build = "1.18"
+
+[dev-dependencies]
+# Offscreen screenshots (`scripts/screenshots`): the software renderer draws without a display.
+slint = { version = "1.18", default-features = false, features = ["software-renderer-systemfonts", "software-renderer-path"] }
+png = "0.18"
