@@ -20,11 +20,6 @@ Android emulators never appear.
 - Charts are custom-painted (a few bars), not a charting library.
 - NVIDIA data through NVML loaded at runtime with `libloading`, never by spawning `nvidia-smi`.
   No NVIDIA driver means no NVIDIA section, not an error.
-- **Win+Esc on KDE Plasma** opens SebWatch in place of System Monitor (Seb, #12): KGlobalAccel
-  launches `sebwatch.desktop`, and System Monitor's own Win+Esc is set to none, given back on
-  uninstall (`sebwatch --bind-win-esc`, `--unbind-win-esc`). One SebWatch at a time: it owns
-  the D-Bus name `io.github.S_Sebb.SebWatch`, and a second start raises the first one's window
-  through a KWin script (Wayland lets no app raise another's window) and exits.
 - No daemon, no root. Everything comes from files a normal user can read
   (`/sys/fs/cgroup`, `/proc`, `/sys/class/drm`).
 
@@ -40,7 +35,8 @@ From the top:
    other, free. Empty with "GPU asleep"
    while the GPU sleeps.
 4. **App table**: name and icon, RAM in use, swapped out, file cache, CPU (cores), disk, GPU
-   and VRAM. Sorted by RAM, largest first, by default; clicking a numeric column's header sorts
+   and VRAM; with an Intel or AMD GPU beside the NVIDIA one, GPU is two columns, "Intel" (or
+   "AMD") and "NVIDIA" (#10). Sorted by RAM, largest first, by default; clicking a numeric column's header sorts
    by it (the thin chevron marks it, down for largest first) and clicking again reverses. The
    order is remembered in the settings file; SebChat's "Apps" title row says "sorted by …".
    Ties keep RAM's order. Expanding an app shows its processes and child groups.
@@ -52,7 +48,8 @@ From the top:
    the bars and tiles don't change. "Closed apps (cache)" stays only when the search finds it
    or one of the apps it lists.
 5. Headline tiles for CPU, GPU, VRAM and disk to the left of the bars: the value large, its
-   unit below, and the last minute as a line with a light fill along the tile's bottom, under
+   unit below (the GPU tile shows the Intel or AMD GPU and the NVIDIA one side by side, a
+   graph line each, #10), and the last minute as a line with a light fill along the tile's bottom, under
    the words (tile style T3, #52). All four are the same size, graph or not. From 1400 px wide
    they sit two by two, so the top area is only as tall as the bars and the table gets the rest;
    narrower windows stack them in one column (#58). The top area is as short as the taller of
@@ -123,14 +120,11 @@ minimised; CPU from `/proc/<pid>/stat`, PSS from `/proc/<pid>/smaps_rollup`.
   rows in sight, and processes are matched to the last sample by lookup, not by a scan of the
   group: now 3.0 % with 1000, 8.0 % with 4000 and 15 % with 8000, linear. What's left is the
   kernel's `stat` and `smaps_rollup` of each process, about 33 µs each.
-- **Start time** to the first frame, measured 2026-11-16 (#12) on the same laptop from exec
-  to Slint's first drawn frame: warm about **200 to 450 ms**; cold, with the app's files dropped
-  from the page cache, about 20 ms more; under memory pressure (`stress-ng --vm` taking all but
-  about 1 GB, PSI full about 20 %) **0.5 to 2.6 s**. Most of it is Slint opening the window and
-  loading the NVIDIA GL driver (250 ms warm, 1.4 to 2 s under pressure); reading takes 45 ms
-  warm and 100 to 300 ms under pressure, and icon lookups about 100 ms. Reading on a thread
-  while the window is built gained nothing measurable against that noise; not done. A second
-  start only raises the open window, in under 10 ms.
+- The Intel GPU (#10), measured 2026-11-17 with `scripts/bench` on the same laptop: main 2.28 %,
+  with it 3.05 / 3.02 % of one core visible, 0.00 % minimised either way. Reading DRM fdinfo
+  costs 4.3 ms of CPU per refresh averaged over 30 refreshes (0.2 %): a full search of every
+  process's fds is 27 ms, so `drm::Scanner` keeps each process's DRM fds and searches all only
+  every 30 s. The rest of the difference is the window drawing the extra column and graph line.
 - No fixed targets: best effort, without hurting stability.
 
 Visual changes are shown as a rendered mockup and approved before they are built.

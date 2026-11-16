@@ -327,6 +327,38 @@ fn screenshots() {
         assert_eq!(ui.get_search(), "");
         assert_eq!(ui.get_filtered(), "");
 
+        // KWin found, the pointer on its Intel cell: "n/a" and the tooltip saying why.
+        shot.key(Key::Control, true);
+        shot.tap("f");
+        shot.key(Key::Control, false);
+        for c in ["k", "w", "i", "n"] {
+            shot.tap(c);
+        }
+        crate::present(&ui, crate::sample::snapshot());
+        let kwin = ui.get_rows().row_data(0).unwrap();
+        assert_eq!((kwin.name.as_str(), kwin.igpu.as_str()), ("KWin", "n/a"));
+        let colour = ui
+            .global::<Theme>()
+            .get_series()
+            .row_data(kwin.series as usize)
+            .unwrap();
+        let pixels = shot.render();
+        let swatch = (0..pixels.len())
+            .rev()
+            .find(|&i| i as u32 % shot.width < 60 && same(pixels[i], colour))
+            .expect("KWin's swatch");
+        // The Intel column's middle: right of it NVIDIA (62 px), VRAM (60 px) and the margins.
+        shot.pointer(
+            1000.0 - 8.0 - 60.0 - 62.0 - 26.0 - 22.0,
+            (swatch as u32 / shot.width) as f32,
+            false,
+        );
+        shot.wait(Duration::from_millis(800));
+        shot.save(&shot.render(), &dir.join(format!("igpu-na-{name}.png")));
+        shot.pointer(4.0, 4.0, false);
+        shot.tap(Key::Escape);
+        assert_eq!(ui.get_search(), "");
+
         if choice == ThemeChoice::Light {
             shot.pointer(1000.0 - 16.0 - 15.0, 14.0 + 15.0, true);
             shot.save(&shot.render(), &dir.join("app-light-menu.png"));

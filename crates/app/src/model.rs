@@ -39,6 +39,8 @@ pub struct Snapshot {
     pub cpu_used: Option<f32>,
     pub cpu_cores: u32,
     pub nvidia_percent: Option<f32>,
+    /// The Intel or AMD GPU, when there is one (`drm.rs`).
+    pub igpu: Option<Igpu>,
     /// Used and total VRAM of the NVIDIA GPU, if it is awake.
     pub vram: Option<(u64, u64)>,
     /// The NVIDIA GPU sleeps: no VRAM figures, as reading them would wake it.
@@ -50,6 +52,15 @@ pub struct Snapshot {
     /// Some on a system that can't split memory by app (no cgroup v2 memory accounting or no
     /// systemd user session): `apps` is empty and `kernel` holds all memory in use.
     pub unsplit: Option<Unsplit>,
+}
+
+pub struct Igpu {
+    /// "Intel" or "AMD": the table's column and the GPU tile name it so.
+    pub vendor: String,
+    /// The whole GPU's busy % (`drm::Usage::busy_percent`).
+    pub percent: f32,
+    /// `percent` covers every process, the unreadable ones too.
+    pub whole_device: bool,
 }
 
 pub struct Unsplit {
@@ -78,6 +89,11 @@ pub struct App {
     /// None when none of its groups has `io.stat`.
     pub disk_per_s: Option<u64>,
     pub gpu_percent: Option<f32>,
+    /// Its busiest engine's busy % on the Intel or AMD GPU; None when it holds none of its clients.
+    pub igpu_percent: Option<f32>,
+    /// Some of its processes' GPU clients can't be read (KWin's) and none read was busy: its Intel
+    /// or AMD figure is unknown rather than none.
+    pub igpu_unreadable: bool,
     pub vram: Option<u64>,
     pub parts: Vec<Part>,
     /// Charged to the app but to none of the processes read: kernel memory, zswap and the
@@ -139,17 +155,20 @@ pub enum Column {
     Cache,
     Cpu,
     Disk,
+    /// The Intel or AMD GPU; hidden without one.
+    Igpu,
     Gpu,
     Vram,
 }
 
 impl Column {
-    pub const ALL: [Column; 7] = [
+    pub const ALL: [Column; 8] = [
         Column::Ram,
         Column::Swap,
         Column::Cache,
         Column::Cpu,
         Column::Disk,
+        Column::Igpu,
         Column::Gpu,
         Column::Vram,
     ];
@@ -162,6 +181,7 @@ impl Column {
             Column::Cache => app.file_cache as f64,
             Column::Cpu => app.cpu as f64,
             Column::Disk => app.disk_per_s.map_or(-1.0, |d| d as f64),
+            Column::Igpu => app.igpu_percent.map_or(-1.0, |p| p as f64),
             Column::Gpu => app.gpu_percent.map_or(-1.0, |p| p as f64),
             Column::Vram => app.vram.map_or(-1.0, |b| b as f64),
         }
@@ -251,6 +271,8 @@ pub struct View {
     history: History,
     /// Set from the reading for the rows: the NVIDIA driver didn't answer.
     gpu_unavailable: bool,
+    /// Set from the reading for the rows: the Intel or AMD GPU tile counts every process.
+    igpu_whole: bool,
     /// Readings failed in a row since the last one shown, and the last error.
     failures: u32,
     error: String,
@@ -284,6 +306,8 @@ pub struct Shown {
     pub swap: Bar,
     /// `None` without an NVIDIA GPU.
     pub vram: Option<Bar>,
+    /// The Intel or AMD GPU's column heading, empty without one.
+    pub igpu: String,
     pub tiles: Vec<Tile>,
     pub rows: Vec<Row>,
     pub sort: Sort,
@@ -483,6 +507,7 @@ impl View {
     fn show(&mut self, s: &Snapshot) -> Shown {
         self.tree.clear();
         self.gpu_unavailable = s.nvidia_unavailable;
+        self.igpu_whole = s.igpu.as_ref().is_some_and(|g| g.whole_device);
         let ram = top(&s.apps, |a| a.ram);
         let swap = top(&s.apps, |a| a.swap);
         let vram = top(&s.apps, |a| a.vram.unwrap_or(0));
@@ -502,6 +527,7 @@ impl View {
             memory: memory_bar(s, &series, &ram),
             swap: swap_bar(s, &series, &coloured(swap, &series)),
             vram: vram_bar(s, &series, &coloured(vram, &series)),
+            igpu: s.igpu.as_ref().map_or(String::new(), |g| g.vendor.clone()),
             tiles: tiles(s, &self.history),
             rows: self.rows(s, &series),
             focus: self.refocus(),
@@ -634,6 +660,17 @@ impl View {
             cache: bytes(app.file_cache).into(),
             cpu: cores(app.cpu).into(),
             disk: app.disk_per_s.map_or(NA.into(), rate).into(),
+            igpu: match app.igpu_percent {
+                Some(p) => percent(p),
+                None if app.igpu_unreadable => NA.into(),
+                None => NONE.into(),
+            }
+            .into(),
+            igpu_tip: match app.igpu_percent {
+                None if app.igpu_unreadable => igpu_hidden(&app.name, self.igpu_whole),
+                _ => String::new(),
+            }
+            .into(),
             gpu: match app.gpu_percent {
                 _ if self.gpu_unavailable => NA.into(),
                 Some(p) => percent(p),
@@ -823,6 +860,8 @@ fn empty_row() -> Row {
         cache: none.clone(),
         cpu: none.clone(),
         disk: none.clone(),
+        igpu: none.clone(),
+        igpu_tip: "".into(),
         gpu: none.clone(),
         vram: none,
         tip: "".into(),
@@ -1119,7 +1158,7 @@ fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
 
 /// The graphed figures of a reading, in `Measure` order: CPU, GPU and VRAM as a share of the
 /// whole, Disk in bytes/s. A sleeping GPU has none.
-fn readings(s: &Snapshot) -> [Option<f32>; 4] {
+fn readings(s: &Snapshot) -> [Option<f32>; crate::history::MEASURES] {
     [
         s.cpu_used.map(|cpu| cpu / s.cpu_cores.max(1) as f32),
         s.nvidia_percent
@@ -1127,6 +1166,7 @@ fn readings(s: &Snapshot) -> [Option<f32>; 4] {
             .map(|p| p / 100.0),
         s.vram.map(|(used, total)| share(used, total)),
         s.disk_per_s.map(|d| d as f32),
+        s.igpu.as_ref().map(|g| g.percent / 100.0),
     ]
 }
 
@@ -1141,6 +1181,7 @@ fn tile(name: &str, value: String, unit: String, graph: Option<(&History, Measur
         graphed: graph.is_some(),
         line: line.into(),
         area: area.into(),
+        ..Tile::default()
     }
 }
 
@@ -1164,7 +1205,14 @@ fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
     // A sleeping or silent GPU keeps its tiles, saying so in place of the figures and graphs not
     // read (no value: the words need the tile's width).
     if s.nvidia_unavailable {
-        tiles.push(unavailable("GPU"));
+        tiles.push(match &s.igpu {
+            Some(igpu) => igpu_tile(
+                igpu,
+                history,
+                tile("GPU", String::new(), "NVIDIA n/a".into(), None),
+            ),
+            None => unavailable("GPU"),
+        });
         tiles.push(unavailable("VRAM"));
     } else {
         if let Some(nvidia) = s.nvidia_percent {
@@ -1174,7 +1222,12 @@ fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
                 (percent(nvidia), "NVIDIA")
             };
             let graph = (!s.gpu_asleep).then_some((history, Measure::Gpu));
-            tiles.push(tile("GPU", value, unit.into(), graph));
+            tiles.push(match &s.igpu {
+                Some(igpu) => igpu_tile(igpu, history, tile("GPU", value, unit.into(), graph)),
+                None => tile("GPU", value, unit.into(), graph),
+            });
+        } else if let Some(igpu) = &s.igpu {
+            tiles.push(igpu_tile(igpu, history, Tile::default()));
         }
         if let Some((used, total)) = s.vram {
             tiles.push(tile(
@@ -1197,6 +1250,23 @@ fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
         None => unavailable("Disk"),
     });
     tiles
+}
+
+/// The GPU tile with the Intel or AMD GPU first and the NVIDIA one, `nvidia`, beside it (a
+/// default tile for none): two figures, the iGPU's graph filled and the NVIDIA one's a line.
+fn igpu_tile(igpu: &Igpu, history: &History, nvidia: Tile) -> Tile {
+    let own = tile(
+        "GPU",
+        percent(igpu.percent),
+        igpu.vendor.clone(),
+        Some((history, Measure::Igpu)),
+    );
+    Tile {
+        value2: nvidia.value,
+        unit2: nvidia.unit,
+        line2: nvidia.line,
+        ..own
+    }
 }
 
 const KB: f64 = 1024.0;
@@ -1234,6 +1304,19 @@ fn rate(n: u64) -> String {
 
 fn cores(n: f32) -> String {
     format!("{n:.2}")
+}
+
+/// Why an app's Intel or AMD GPU figure is "n/a": its processes run with extra privileges (KWin),
+/// so the kernel keeps their GPU clients from other programs.
+fn igpu_hidden(name: &str, tile_counts_it: bool) -> String {
+    let tile = if tile_counts_it {
+        " The GPU tile still counts it."
+    } else {
+        ""
+    };
+    format!(
+        "{name} hides its GPU use: it runs with extra privileges, so its GPU figures can't be read.{tile}"
+    )
 }
 
 fn percent(n: f32) -> String {
@@ -1311,13 +1394,20 @@ mod tests {
         let tiles: Vec<_> = asleep
             .tiles
             .iter()
-            .map(|t| (t.name.as_str(), t.value.as_str(), t.unit.as_str()))
+            .map(|t| (t.name.as_str(), t.value2.as_str(), t.unit2.as_str()))
             .collect();
         assert!(tiles.contains(&("GPU", "", "NVIDIA asleep")));
-        assert!(tiles.contains(&("VRAM", "", "GPU asleep")));
-        // Their graphs go; CPU and Disk keep theirs.
+        assert_eq!(asleep.tiles[1].line2, "");
+        assert_eq!(
+            (
+                asleep.tiles[2].value.as_str(),
+                asleep.tiles[2].unit.as_str()
+            ),
+            ("", "GPU asleep")
+        );
+        // Its graphs go (the Intel GPU's stays); CPU and Disk keep theirs.
         let graphed: Vec<_> = asleep.tiles.iter().map(|t| t.graphed).collect();
-        assert_eq!(graphed, [true, false, false, true]);
+        assert_eq!(graphed, [true, true, false, true]);
         assert!(
             asleep
                 .rows
@@ -1330,6 +1420,64 @@ mod tests {
             ..crate::sample::snapshot()
         };
         assert!(View::default().update(none).vram.is_none());
+    }
+
+    #[test]
+    fn an_intel_gpu_shares_the_gpu_tile_and_gets_its_own_column() {
+        let mut view = View::default();
+        let minute = crate::sample::minute(crate::sample::snapshot, Instant::now());
+        let shown = minute.into_iter().map(|s| view.update(s)).last().unwrap();
+        assert_eq!(shown.igpu, "Intel");
+        let gpu = &shown.tiles[1];
+        let texts = [&gpu.value, &gpu.unit, &gpu.value2, &gpu.unit2].map(|t| t.to_string());
+        assert_eq!(texts, ["14%", "Intel", "0%", "NVIDIA"]);
+        // A line each: Intel's (filled), NVIDIA's beside it.
+        assert!(!gpu.line.is_empty() && !gpu.area.is_empty() && !gpu.line2.is_empty());
+        let cell = |shown: &Shown, name: &str| {
+            let row = shown.rows.iter().find(|r| r.name == name).unwrap();
+            (row.igpu.to_string(), row.gpu.to_string())
+        };
+        assert_eq!(cell(&shown, "Zen Browser"), ("4%".into(), "2%".into()));
+        // KWin's clients can't be read: unknown, not none, and the cell says why.
+        assert_eq!(cell(&shown, "KWin"), (NA.into(), "1%".into()));
+        let kwin = shown.rows.iter().find(|r| r.name == "KWin").unwrap();
+        assert!(kwin.igpu_tip.starts_with("KWin hides its GPU use"));
+        assert!(kwin.igpu_tip.ends_with("The GPU tile still counts it."));
+        let zen = shown.rows.iter().find(|r| r.name == "Zen Browser").unwrap();
+        assert_eq!(zen.igpu_tip, "");
+        assert_eq!(cell(&shown, "Discord"), (NONE.into(), NONE.into()));
+
+        // Sorted by it, the busiest first.
+        let mut view = View {
+            sort: Sort::default().click(Column::Igpu),
+            ..View::default()
+        };
+        let sorted = view.update(crate::sample::snapshot());
+        assert_eq!(sorted.rows[0].name, "Zen Browser");
+        assert_eq!(sorted.rows[1].name, "Plasma Workspace");
+
+        // Without one the tile and table stay as they were.
+        let plain = View::default().update(Snapshot {
+            igpu: None,
+            ..crate::sample::snapshot()
+        });
+        assert_eq!(plain.igpu, "");
+        let gpu = &plain.tiles[1];
+        assert_eq!(
+            (gpu.value.as_str(), gpu.unit.as_str(), gpu.unit2.as_str()),
+            ("0%", "NVIDIA", "")
+        );
+        // Without an NVIDIA GPU the tile shows the Intel one alone.
+        let intel = View::default().update(Snapshot {
+            nvidia_percent: None,
+            vram: None,
+            ..crate::sample::snapshot()
+        });
+        let gpu = &intel.tiles[1];
+        assert_eq!(
+            (gpu.value.as_str(), gpu.unit.as_str(), gpu.unit2.as_str()),
+            ("14%", "Intel", "")
+        );
     }
 
     fn names(bar: &Bar) -> Vec<String> {
@@ -1715,6 +1863,7 @@ mod tests {
     fn failed_readings_say_unavailable_and_zero_stays_zero() {
         let mut s = crate::sample::unavailable();
         s.cpu_used = None;
+        s.igpu = None;
         // The emulator expanded, with a group whose `io.stat` failed beside its processes.
         let emulator = &mut s.apps[1];
         emulator.parts.insert(

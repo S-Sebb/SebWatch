@@ -21,12 +21,13 @@ const THEMES: [(ThemeChoice, &str); 4] = [
     (ThemeChoice::Sebchat, "sebchat"),
 ];
 
-const COLUMNS: [(Column, &str); 7] = [
+const COLUMNS: [(Column, &str); 8] = [
     (Column::Ram, "ram"),
     (Column::Swap, "swap"),
     (Column::Cache, "cache"),
     (Column::Cpu, "cpu"),
     (Column::Disk, "disk"),
+    (Column::Igpu, "igpu"),
     (Column::Gpu, "gpu"),
     (Column::Vram, "vram"),
 ];

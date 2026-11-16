@@ -43,6 +43,11 @@ export struct Tile {
     // Empty before two readings in a row.
     line: string,
     area: string,
+    // The GPU tile with an Intel or AMD GPU: the NVIDIA GPU's figure, unit and line beside the
+    // first; empty without one.
+    value2: string,
+    unit2: string,
+    line2: string,
 }
 
 export enum RowKind { app, group, process, kernel, more }
@@ -68,6 +73,10 @@ export struct Row {
     cache: string,
     cpu: string,
     disk: string,
+    // The Intel or AMD GPU; empty without one.
+    igpu: string,
+    // Why that figure is "n/a" (KWin hides its GPU use); empty otherwise.
+    igpu-tip: string,
     gpu: string,
     vram: string,
     // Shown on hover; empty for none.
@@ -297,15 +306,52 @@ component BarView {
     }
 }
 
+// A tile's figure and the unit under it; a coloured dot before the unit keys it to its line in
+// the GPU tile's graph (transparent for none).
+component TileFigure inherits VerticalLayout {
+    in property <string> value;
+    in property <string> unit;
+    in property <color> dot;
+    spacing: 2px;
+    horizontal-stretch: 1;
+    // No value while the GPU sleeps (the unit says so), but the same room for it.
+    Label {
+        text: root.value;
+        font-family: Theme.picnic ? "Jersey 10" : "";
+        font-size: Theme.picnic ? 32px : 22px;
+        // Without the font's full leading, leaving the graph more room.
+        height: Theme.picnic ? 30px : 26px;
+    }
+    HorizontalLayout {
+        spacing: 5px;
+        alignment: start;
+        if root.dot != transparent: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: Theme.picnic ? 0 : 4px;
+                background: root.dot;
+            }
+        }
+        Muted {
+            text: root.unit;
+            font-size: Theme.small;
+        }
+    }
+}
+
 component TileView inherits Card {
     in property <Tile> tile;
+    // The NVIDIA GPU's colour beside the Intel or AMD one's accent.
+    property <color> second: Theme.picnic ? #8a63d2 : Theme.muted;
     inset: Theme.picnic ? 12px : 0;
     // The graph runs to the frame's corners.
     clip-content: true;
     // AT-SPI (AccessKit 0.24) passes on no text values, so the value is the description.
     accessible-role: groupbox;
     accessible-label: self.tile.name;
-    accessible-description: self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit;
+    accessible-description: (self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit) + (self.tile.unit2 == "" ? "" : self.tile.value2 == "" ? ", " + self.tile.unit2 : ", " + self.tile.value2 + " " + self.tile.unit2);
     // Every tile the same size, graph or not, sharing out the bars' height.
     vertical-stretch: 1;
     Rectangle {
@@ -323,17 +369,18 @@ component TileView inherits Card {
                     font-size: Theme.small;
                     font-weight: Theme.picnic ? 800 : 400;
                 }
-                // No value while the GPU sleeps (the unit says so), but the same room for it.
-                Label {
-                    text: root.tile.value;
-                    font-family: Theme.picnic ? "Jersey 10" : "";
-                    font-size: Theme.picnic ? 32px : 22px;
-                    // Without the font's full leading, leaving the graph more room.
-                    height: Theme.picnic ? 30px : 26px;
-                }
-                Muted {
-                    text: root.tile.unit;
-                    font-size: Theme.small;
+                HorizontalLayout {
+                    TileFigure {
+                        value: root.tile.value;
+                        unit: root.tile.unit;
+                        dot: root.tile.unit2 == "" ? transparent : Theme.accent;
+                    }
+                    if root.tile.unit2 != "": TileFigure {
+                        value: root.tile.value2;
+                        unit: root.tile.unit2;
+                        // None beside "NVIDIA asleep": it has no line.
+                        dot: root.tile.value2 == "" ? transparent : root.second;
+                    }
                 }
             }
             // The last minute along the bottom, below the words so no line runs under them;
@@ -349,6 +396,14 @@ component TileView inherits Card {
                     fill: Theme.accent.with-alpha(0.19);
                     // Fitted like the line, which leaves room for its stroke.
                     stroke: transparent;
+                    stroke-width: Theme.picnic ? 2px : 1.5px;
+                }
+                if root.tile.line2 != "": Path {
+                    viewbox-width: 290;
+                    viewbox-height: 100;
+                    fit: fill;
+                    commands: root.tile.line2;
+                    stroke: root.second;
                     stroke-width: Theme.picnic ? 2px : 1.5px;
                 }
                 if root.tile.line != "": Path {
@@ -556,9 +611,13 @@ component MenuButton {
 }
 
 // Table column widths after the stretching name column.
-global Columns {
-    out property <[length]> widths: [110px, 112px, 90px, 94px, 84px, 46px, 60px];
-    out property <[string]> titles: ["RAM in use", "Swapped out", "File cache", "CPU (cores)", "Disk", "GPU", "VRAM"];
+// With an Intel or AMD GPU (`igpu` names it) the GPU column becomes two, that GPU's and NVIDIA's.
+export global Columns {
+    in property <string> igpu;
+    out property <[length]> widths: [110px, 112px, 90px, 94px, 84px, self.igpu == "" ? 0 : 52px, self.igpu == "" ? 46px : 62px, 60px];
+    out property <[string]> titles: ["RAM in use", "Swapped out", "File cache", "CPU (cores)", "Disk", self.igpu, self.igpu == "" ? "GPU" : "NVIDIA", "VRAM"];
+    // The widths' sum.
+    out property <length> total: self.igpu == "" ? 596px : 664px;
 }
 
 component Cell inherits Label {
@@ -587,7 +646,7 @@ component RowView inherits Rectangle {
     accessible-label: self.entry.detail == "" ? self.entry.name : self.entry.name + " " + self.entry.detail;
     // AT-SPI (AccessKit 0.24) passes on neither text values nor the expanded state, so the
     // description says both, then the tooltip.
-    accessible-description: (!self.top ? "" : self.entry.expanded ? "expanded, " : "collapsed, ") + Columns.titles[0] + " " + self.entry.ram + ", " + Columns.titles[1] + " " + self.entry.swap + ", " + Columns.titles[2] + " " + self.entry.cache + ", " + Columns.titles[3] + " " + self.entry.cpu + ", " + Columns.titles[4] + " " + self.entry.disk + ", " + Columns.titles[5] + " " + self.entry.gpu + ", " + Columns.titles[6] + " " + self.entry.vram + (self.entry.tip == "" ? "" : ". " + self.entry.tip);
+    accessible-description: (!self.top ? "" : self.entry.expanded ? "expanded, " : "collapsed, ") + Columns.titles[0] + " " + self.entry.ram + ", " + Columns.titles[1] + " " + self.entry.swap + ", " + Columns.titles[2] + " " + self.entry.cache + ", " + Columns.titles[3] + " " + self.entry.cpu + ", " + Columns.titles[4] + " " + self.entry.disk + ", " + (Columns.igpu == "" ? "" : Columns.igpu + " GPU " + self.entry.igpu + (self.entry.igpu-tip == "" ? "" : " (" + self.entry.igpu-tip + ")") + ", ") + (Columns.igpu == "" ? "GPU " : "NVIDIA GPU ") + self.entry.gpu + ", " + Columns.titles[7] + " " + self.entry.vram + (self.entry.tip == "" ? "" : ". " + self.entry.tip);
     accessible-expandable: self.top;
     accessible-expanded: self.entry.expanded;
     accessible-item-selectable: true;
@@ -687,14 +746,20 @@ component RowView inherits Rectangle {
             text: root.entry.disk;
             font-size: root.small;
         }
-        Cell {
+        igpu-cell := Cell {
             column: 5;
+            muted: root.muted;
+            text: Columns.igpu == "" ? "" : root.entry.igpu;
+            font-size: root.small;
+        }
+        Cell {
+            column: 6;
             muted: root.muted;
             text: root.entry.gpu;
             font-size: root.small;
         }
         Cell {
-            column: 6;
+            column: 7;
             muted: root.muted;
             text: root.entry.vram;
             font-size: root.small;
@@ -723,6 +788,24 @@ component RowView inherits Rectangle {
     TouchArea {
         clicked => {
             root.clicked();
+        }
+    }
+
+    // Over the Intel or AMD cell, above the row's touch area so it gets the hover.
+    if root.entry.igpu-tip != "": Rectangle {
+        x: igpu-cell.x;
+        y: 0;
+        width: igpu-cell.width;
+        height: root.line;
+        Tooltip {
+            TipCard {
+                Label {
+                    width: 320px;
+                    text: root.entry.igpu-tip;
+                    font-size: Theme.small;
+                    wrap: word-wrap;
+                }
+            }
         }
     }
 
@@ -888,9 +971,9 @@ component Table {
         field.clear();
     }
 
-    property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", "GPU", "VRAM"];
+    property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", Columns.igpu + " GPU", Columns.igpu == "" ? "GPU" : "NVIDIA GPU", "VRAM"];
     // The name column keeps 220 px; a narrower window scrolls the table sideways.
-    property <length> content-width: max(self.width, 220px + 596px + 16px);
+    property <length> content-width: max(self.width, 220px + Columns.total + 16px);
 
     VerticalLayout {
         // The search line above the table, as in KDE System Monitor; SebChat titles it "Apps".
@@ -969,6 +1052,7 @@ component Table {
                 }
                 for title[i] in Columns.titles: Rectangle {
                     width: Columns.widths[i];
+                    visible: self.width > 0;
                     Rectangle {
                         x: -1px;
                         width: 1px;

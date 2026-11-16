@@ -25,11 +25,6 @@ Every release ships with patch notes.
 - The rpm installs with `sudo dnf install ./sebwatch-X.Y.Z-1.x86_64.rpm` or from the release
   URL, and removes with `sudo dnf remove sebwatch`. The AppImage runs where it is, after
   `chmod +x`.
-- Win+Esc on KDE Plasma: the rpm's scriptlets run `sebwatch --bind-win-esc` on install and
-  `--unbind-win-esc` on removal in the Plasma session of the user who ran `sudo dnf`;
-  `scripts/install` and `scripts/uninstall` do the same into `~/.local`. The AppImage binds only
-  when run with `--bind-win-esc`. `scripts/test-win-esc` checks it on a headless KWin with its
-  own D-Bus session and HOME, leaving the desktop and its shortcuts alone.
 - To build and test both without a release, run the workflow by hand (Actions, `Release
   packages`, Run workflow): the packages stay as that run's artifacts. A PR that changes the
   packaging runs it too.
