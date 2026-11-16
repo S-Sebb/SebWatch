@@ -11,7 +11,7 @@ URL:            https://github.com/S-Sebb/SebWatch
 ExclusiveArch:  x86_64
 
 # Loaded at run time, so rpm's ELF scan doesn't find them: the windowing system (Wayland or X11),
-# keyboard layouts, GL through EGL or GLX, and fonts. NVML comes with the NVIDIA driver and is
+# keyboard layouts and GL through EGL or GLX; fontconfig is linked and found. NVML comes with the NVIDIA driver and is
 # optional.
 Requires:       libwayland-client.so.0()(64bit)
 Requires:       libwayland-cursor.so.0()(64bit)
@@ -25,8 +25,6 @@ Requires:       libXi.so.6()(64bit)
 Requires:       libXrandr.so.2()(64bit)
 Requires:       libEGL.so.1()(64bit)
 Requires:       libGL.so.1()(64bit)
-Requires:       libfontconfig.so.1()(64bit)
-Requires:       libfreetype.so.6()(64bit)
 Requires:       hicolor-icon-theme
 
 %description
@@ -43,6 +41,7 @@ done
 install -Dm644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
 
 %files
+%dir %{_datadir}/licenses/%{name}
 %license %{_datadir}/licenses/%{name}/LICENSE
 %{_bindir}/sebwatch
 %{_datadir}/applications/sebwatch.desktop
