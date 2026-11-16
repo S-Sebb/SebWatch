@@ -40,7 +40,7 @@ export struct Tile {
 export enum RowKind { app, group, process, kernel, more }
 
 // A table row: an app, one of an expanded app's processes or child groups, its kernel share,
-// or the fold holding the rest. Absent values are "—".
+// the fold holding the rest, or Closed apps (cache). Absent values are "—".
 export struct Row {
     kind: RowKind,
     // 0 for an app, 1 under it, 2 for a process under one of its groups.
@@ -117,7 +117,7 @@ component SegmentBar {
             border-radius: Theme.radius;
             clip: true;
             background: SegmentFill.color(s.kind, s.series);
-            if s.kind == SegmentKind.cache: Image {
+            if s.kind == SegmentKind.cache || s.kind == SegmentKind.closed: Image {
                 width: 100%;
                 height: 100%;
                 source: Art.hatch;

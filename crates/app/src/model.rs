@@ -29,6 +29,8 @@ pub struct Snapshot {
     pub free: u64,
     /// Sorted by RAM in use, largest first.
     pub apps: Vec<App>,
+    /// Memory still charged to groups whose processes all exited, outside any running app.
+    pub closed: Closed,
     pub cpu_used: f32,
     pub cpu_cores: u32,
     pub nvidia_percent: Option<f32>,
@@ -78,6 +80,24 @@ pub struct Unreadable {
     pub pid: u32,
     /// Refused: another user's process. Otherwise the read failed some other way.
     pub denied: bool,
+}
+
+/// "Closed apps (cache)": its own segment and the table's last row, outside the apps.
+#[derive(Default)]
+pub struct Closed {
+    pub ram: u64,
+    pub swap: u64,
+    pub file_cache: u64,
+    /// Biggest RAM first.
+    pub exited: Vec<Exited>,
+}
+
+/// A closed app, or the slice that kept a closed app's charges.
+pub struct Exited {
+    pub name: String,
+    pub ram: u64,
+    pub swap: u64,
+    pub file_cache: u64,
 }
 
 /// A row under an expanded app: one of its groups (when it has several), or a process.
@@ -227,6 +247,41 @@ pub struct Shown {
 
 /// The key of the "N more apps" row.
 const MORE: &str = "\u{0}more";
+/// The key of the closed apps' row.
+const CLOSED: &str = "\u{0}closed";
+use sebwatch_core::memory::CLOSED_APPS;
+
+/// "1 app", "3 apps".
+fn apps(n: usize) -> String {
+    format!("{n} app{}", if n == 1 { "" } else { "s" })
+}
+
+/// The closed apps' segment in a bar, when they hold some of it; `note` adds a tooltip line.
+fn closed_segment(
+    closed: &Closed,
+    size: u64,
+    total: u64,
+    place: &str,
+    note: Option<String>,
+) -> Option<Segment> {
+    (size > 0).then(|| {
+        let mut notes = vec![format!(
+            "still charged to {} that have exited",
+            apps(closed.exited.len())
+        )];
+        notes.extend(note);
+        Segment {
+            tip: format!(
+                "{} {place}, {:.0}% of {}",
+                bytes(size),
+                share(size, total) * 100.0,
+                bytes(total)
+            )
+            .into(),
+            ..segment(SegmentKind::Closed, CLOSED_APPS, size, total, &notes)
+        }
+    })
+}
 
 impl View {
     /// The keys of the expanded apps, whose processes the next reading includes.
@@ -299,9 +354,10 @@ impl View {
         let mut sorted = self.sort.apply(&s.apps);
         let colour = |app: &App| series.get(app.key.as_str()).map_or(-1, |&c| c as i32);
         // A search lists every app it finds, so none hides in the fold.
-        let listed = match self.searching() {
+        let query = self.searching();
+        let listed = match &query {
             Some(query) => {
-                sorted.retain(|a| matches(a, &query));
+                sorted.retain(|a| matches(a, query));
                 sorted.len()
             }
             None => sorted.len().min(LISTED),
@@ -326,7 +382,45 @@ impl View {
                 }
             }
         }
+        let found = |query: &str| {
+            let found = |text: &str| text.to_lowercase().contains(query);
+            found(CLOSED_APPS) || s.closed.exited.iter().any(|e| found(&e.name))
+        };
+        if query.as_deref().is_none_or(found) {
+            self.closed_rows(&mut rows, &s.closed);
+        }
         rows
+    }
+
+    /// Last, whatever the sort: it isn't an app, and it shrinks as the kernel reclaims it.
+    fn closed_rows(&self, rows: &mut Vec<Row>, closed: &Closed) {
+        if closed.exited.is_empty() {
+            return;
+        }
+        let expanded = self.expanded.contains(CLOSED);
+        rows.push(Row {
+            kind: RowKind::More,
+            key: CLOSED.into(),
+            name: CLOSED_APPS.into(),
+            detail: apps(closed.exited.len()).into(),
+            expanded,
+            ram: bytes(closed.ram).into(),
+            swap: bytes(closed.swap).into(),
+            cache: bytes(closed.file_cache).into(),
+            ..empty_row()
+        });
+        if expanded {
+            rows.extend(closed.exited.iter().map(|e| Row {
+                kind: RowKind::Process,
+                depth: 1,
+                name: e.name.as_str().into(),
+                detail: "exited".into(),
+                ram: bytes(e.ram).into(),
+                swap: bytes(e.swap).into(),
+                cache: bytes(e.file_cache).into(),
+                ..empty_row()
+            }));
+        }
     }
 
     fn app_rows(&mut self, rows: &mut Vec<Row>, app: &App, series: i32) {
@@ -608,6 +702,20 @@ fn memory_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
         })
         .collect();
     segments.extend(others(&s.apps, named, |a| a.ram, total));
+    // Its cache stays in File cache, as every app's does.
+    let cache = (s.closed.file_cache > 0).then(|| {
+        format!(
+            "plus {} of file cache, freed when apps need the room",
+            bytes(s.closed.file_cache)
+        )
+    });
+    segments.extend(closed_segment(
+        &s.closed,
+        s.closed.ram,
+        total,
+        "in RAM",
+        cache,
+    ));
     segments.extend([
         segment(
             SegmentKind::Zswap,
@@ -649,8 +757,15 @@ fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
             app_segment(app, c, app.swap, total, "in swap", Vec::new())
         })
         .collect();
-    let used: u64 = s.apps.iter().map(|a| a.swap).sum();
+    let used: u64 = s.apps.iter().map(|a| a.swap).sum::<u64>() + s.closed.swap;
     segments.extend(others(&s.apps, named, |a| a.swap, total));
+    segments.extend(closed_segment(
+        &s.closed,
+        s.closed.swap,
+        total,
+        "in swap",
+        None,
+    ));
     segments.push(segment(
         SegmentKind::Free,
         "Free swap",
@@ -1015,6 +1130,7 @@ mod tests {
             };
             (app.swap, app.vram) = (swap, vram);
         }
+        s.closed.swap = 0;
         let shown = View::default().update(s);
         let swap = names(&shown.swap);
         let vram = names(&shown.vram.unwrap());
@@ -1034,21 +1150,31 @@ mod tests {
             let names: Vec<String> = shown.rows.iter().map(|r| r.name.to_string()).collect();
             (names, shown.filtered)
         };
-        // Konsole, Akonadi and Kate sit in the fold: found, they show without it.
+        // Konsole, Akonadi and Kate sit in the fold: found, they show without it. Okular has
+        // exited, so its memory is found under Closed apps.
         let (found, note) = find(&mut view, "K");
         assert_eq!(
             found,
-            ["Plasma Workspace", "KWin", "Konsole", "Akonadi", "Kate"]
+            [
+                "Plasma Workspace",
+                "KWin",
+                "Konsole",
+                "Akonadi",
+                "Kate",
+                "Closed apps (cache)"
+            ]
         );
         assert_eq!(
             note,
             "Filtered: 5 of 18 apps · the bars show the whole system"
         );
         assert_eq!(find(&mut view, "guide35.service").0, ["Android emulator"]);
+        assert_eq!(find(&mut view, "firefox").0, ["Closed apps (cache)"]);
         assert_eq!(find(&mut view, " 4130291 ").0, ["Android emulator"]);
         // A PID is matched whole, not by its digits.
         assert!(find(&mut view, "413029").0.is_empty());
-        assert_eq!(find(&mut view, "").0.len(), LISTED + 1);
+        // Cleared: the listed apps, the fold and Closed apps.
+        assert_eq!(find(&mut view, "").0.len(), LISTED + 2);
         // The bars don't change with the search.
         view.search = "kate".into();
         let shown = view.render();
@@ -1068,6 +1194,69 @@ mod tests {
         assert_eq!(rows[6].depth, 1);
         view.toggle("Android emulator");
         assert_eq!(view.render().rows.len(), collapsed);
+    }
+
+    #[test]
+    fn closed_apps_come_last_hatched_and_list_what_they_hold() {
+        // Sorted by swap, where it would otherwise sit among the apps.
+        let mut view = View {
+            sort: Sort::default().click(Column::Swap),
+            ..Default::default()
+        };
+        let shown = view.update(crate::sample::snapshot());
+        let last = shown.rows.last().unwrap();
+        assert_eq!(
+            (last.key.as_str(), last.name.as_str(), last.detail.as_str()),
+            (CLOSED, CLOSED_APPS, "3 apps")
+        );
+        assert_eq!(
+            (last.ram.as_str(), last.cache.as_str()),
+            ("412 MB", "398 MB")
+        );
+
+        // In the RAM bar right after Other apps; its cache stays in File cache.
+        let memory: Vec<_> = slint::Model::iter(&shown.memory.segments).collect();
+        let kinds: Vec<_> = memory.iter().map(|seg| seg.kind).collect();
+        let other = kinds.iter().position(|&k| k == SegmentKind::Other).unwrap();
+        assert_eq!(kinds[other + 1], SegmentKind::Closed);
+        let closed = &memory[other + 1];
+        assert_eq!(
+            (closed.name.as_str(), closed.size.as_str()),
+            (CLOSED_APPS, "412 MB")
+        );
+        let notes: Vec<_> = slint::Model::iter(&closed.notes).collect();
+        assert_eq!(
+            notes,
+            [
+                "still charged to 3 apps that have exited",
+                "plus 398 MB of file cache, freed when apps need the room"
+            ]
+        );
+
+        view.toggle(CLOSED);
+        let rows = view.render().rows;
+        let children: Vec<_> = rows[rows.len() - 3..]
+            .iter()
+            .map(|r| (r.name.as_str(), r.detail.as_str(), r.ram.as_str(), r.depth))
+            .collect();
+        assert_eq!(
+            children,
+            [
+                ("Okular", "exited", "214 MB", 1),
+                ("Firefox", "exited", "151 MB", 1),
+                ("dnf makecache", "exited", "47 MB", 1),
+            ]
+        );
+        assert_eq!(rows[rows.len() - 4].key, CLOSED);
+
+        // Nothing charged to closed apps: no row, no segment.
+        let none = Snapshot {
+            closed: Closed::default(),
+            ..crate::sample::snapshot()
+        };
+        let shown = View::default().update(none);
+        assert!(shown.rows.iter().all(|r| r.key != CLOSED));
+        assert!(slint::Model::iter(&shown.memory.segments).all(|s| s.kind != SegmentKind::Closed));
     }
 
     /// The leftover row of the sample's Android emulator, changed by `edit`.

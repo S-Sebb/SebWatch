@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use sebwatch_core::cpu_io::{self, Rates, Sample};
 use sebwatch_core::memory::{self, CGROUP_ROOT, PROC_ROOT};
-use sebwatch_core::naming::{AppName, Naming, SERVICE_ICON};
+use sebwatch_core::naming::Naming;
 use sebwatch_core::nvidia::{self, Nvidia};
 use sebwatch_core::processes;
 
-use crate::model::{App, Part, Snapshot, Unreadable};
+use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable};
 
 pub struct Reader {
     naming: Naming,
@@ -56,21 +56,16 @@ impl Reader {
         // Processes are read only for expanded apps; one that folds up forgets its last sample.
         self.drills.retain(|key, _| expanded.contains(key));
         let mut apps = Vec::new();
+        let mut closed = Closed::default();
         for app in &mem.apps {
+            if app.name == memory::CLOSED_APPS {
+                closed = self.closed(app);
+                continue;
+            }
             // Every group's processes, for finding an app by PID.
             let pids: Vec<Vec<u32>> = app.cgroups.iter().map(|g| pids(&root.join(g))).collect();
-            // The closed-apps entry has no groups to name it by.
-            let named = match app.cgroups.first() {
-                Some(first) => {
-                    let main = pids[0].first().and_then(|&pid| main_process(pid));
-                    self.naming.name(first, main.as_deref()).clone()
-                }
-                None => AppName {
-                    name: app.name.clone(),
-                    icon: SERVICE_ICON.into(),
-                    agents: false,
-                },
-            };
+            let main = pids[0].first().and_then(|&pid| main_process(pid));
+            let named = self.naming.name(&app.cgroups[0], main.as_deref()).clone();
             let usage = |f: fn(&nvidia::AppUsage) -> f64| {
                 let gpu = gpu.as_ref()?;
                 let used: Vec<_> = app.cgroups.iter().filter_map(|g| gpu.apps.get(g)).collect();
@@ -167,6 +162,7 @@ impl Reader {
             kernel: mem.kernel_and_drivers,
             free: mem.free,
             apps,
+            closed,
             cpu_used: total_rates.0 as f32,
             cpu_cores: self.cores,
             nvidia_percent: match &gpu {
@@ -180,6 +176,36 @@ impl Reader {
             gpu_asleep: asleep,
             disk_per_s: total_rates.1,
         })
+    }
+}
+
+impl Reader {
+    /// The closed-apps entry, its groups named like apps and merged by name.
+    fn closed(&mut self, entry: &memory::AppMemory) -> Closed {
+        let mut exited: Vec<Exited> = Vec::new();
+        for e in &entry.exited {
+            let name = self.naming.name(&e.group, None).name.clone();
+            match exited.iter_mut().find(|x| x.name == name) {
+                Some(x) => {
+                    x.ram += e.ram;
+                    x.swap += e.swap;
+                    x.file_cache += e.file_cache;
+                }
+                None => exited.push(Exited {
+                    name,
+                    ram: e.ram,
+                    swap: e.swap,
+                    file_cache: e.file_cache,
+                }),
+            }
+        }
+        exited.sort_by_key(|e| std::cmp::Reverse(e.ram));
+        Closed {
+            ram: entry.ram,
+            swap: entry.swap,
+            file_cache: entry.file_cache,
+            exited,
+        }
     }
 }
 

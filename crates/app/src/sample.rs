@@ -1,7 +1,7 @@
 //! A fixed reading with the approved mockup's numbers (this PC, 2026-11-15), shown until the
 //! window reads `sebwatch-core`.
 
-use crate::model::{App, Part, Snapshot, Unreadable};
+use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable};
 
 const K: f64 = 1024.0;
 const M: f64 = K * K;
@@ -288,15 +288,17 @@ pub fn snapshot() -> Snapshot {
     let ram_total = b(15.3, G);
     let (zswap_pool, file_cache, free) = (b(50.0, M), b(2.1, G), b(868.0, M));
     let apps_ram: u64 = apps.iter().map(|a| a.ram).sum();
+    let closed = closed();
     Snapshot {
         ram_total,
         swap_total: b(32.0, G),
         zswap_pool,
         file_cache,
         // The remainder, as in docs/accounting.md.
-        kernel: ram_total - apps_ram - zswap_pool - file_cache - free,
+        kernel: ram_total - apps_ram - closed.ram - zswap_pool - file_cache - free,
         free,
         apps,
+        closed,
         cpu_used: 2.6,
         cpu_cores: 16,
         nvidia_percent: Some(0.0),
@@ -304,6 +306,29 @@ pub fn snapshot() -> Snapshot {
         vram: Some((b(0.3, G), b(8.0, G))),
         gpu_asleep: false,
         disk_per_s: b(9.0, M),
+    }
+}
+
+/// Three apps that exited, as in the approved mockup (`closed-light.png`).
+fn closed() -> Closed {
+    let exited: Vec<Exited> = [
+        ("Okular", 214.0, 12.0, 205.0),
+        ("Firefox", 151.0, 9.0, 148.0),
+        ("dnf makecache", 47.0, 0.0, 45.0),
+    ]
+    .into_iter()
+    .map(|(name, ram, swap, cache)| Exited {
+        name: name.into(),
+        ram: b(ram, M),
+        swap: b(swap, M),
+        file_cache: b(cache, M),
+    })
+    .collect();
+    Closed {
+        ram: exited.iter().map(|e| e.ram).sum(),
+        swap: exited.iter().map(|e| e.swap).sum(),
+        file_cache: exited.iter().map(|e| e.file_cache).sum(),
+        exited,
     }
 }
 
