@@ -46,16 +46,27 @@ Measured 2026-11-16 on Seb's laptop (i7-11800H, RTX 3070 Laptop GPU on driver 62
 (`kwin_wayland --virtual`), drawing through the NVIDIA GPU via EGL, 60 s visible, then 60 s
 minimised; CPU from `/proc/<pid>/stat`, PSS from `/proc/<pid>/smaps_rollup`.
 
-- Visible: about **2.2 % of one core**, **127 MB PSS**. Minimised: **0.00 %**.
-- CPU per refresh is about 30 ms on the reader thread (NVML init and shutdown 10 ms, kept so a
-  laptop dGPU can sleep between refreshes; memory 4.5 ms; CPU and disk 3 ms) and 15 ms on the UI
-  thread (model and frame). Updating table rows in place instead of rebuilding them saved
-  nothing measurable.
+- Visible: about **2.3 % of one core**, **100 to 125 MB PSS**. Minimised: **0.00 %**. The PSS
+  of the same binary moves between those figures from run to run with the NVIDIA driver's own
+  mappings; the app's heap is about 13 MB of it.
+- CPU per refresh is about 28 ms on the reader thread and 16 ms on the UI thread. The reader's
+  biggest part is NVML, 19 ms: initialising it, attaching the device (7 ms, the same by index or
+  by PCI address) and shutting it down take 11 ms of that, kept so a laptop dGPU can sleep
+  between refreshes. Memory takes 4.3 ms, CPU and disk 1.2 ms, the cgroup walk they share 2 ms.
+  On the UI thread the frame takes 8 ms; building the table and bars 0.2 ms, so updating rows in
+  place instead of rebuilding them saves nothing measurable. One frame is drawn per refresh.
 - About 65 MB of the PSS is the GL driver every GL window loads (NVIDIA's EGL libraries and
   device mappings, and Mesa's LLVM, which glvnd loads alongside). Slint's software renderer
-  measured 57 MB and 1.9 % visible, but it has no frame notifications, so it kept reading while
-  minimised (1.1 %).
-- The targets in #8 (under 1 % visible, under 40 MB) are not met on this machine.
+  measured 57 MB and 1.9 % visible (#8), but it has no frame notifications, so it kept reading
+  while minimised (1.1 %); not used.
+- The optimisation pass in #30 kept what `scripts/bench` showed, run interleaved with main
+  (main 2.42 / 2.52 %, after 2.32 / 2.27 %): one cgroup walk per refresh instead of two, and no
+  NVML power reading (shown nowhere, 1.2 ms). Measured and dropped as no gain: `lto`,
+  `codegen-units = 1` and `strip` (CPU 2.55 / 2.80 %, PSS unchanged; only the file shrank,
+  28 to 18 MB) and glibc `arena_max=2` (anonymous memory unchanged). Keeping NVML open between
+  refreshes would save about 4 ms more, but on this laptop the dGPU drives the display and never
+  suspends, so it can't be shown that the GPU still sleeps with it open; not done.
+- No fixed targets: best effort, without hurting stability.
 
 Visual changes are shown as a rendered mockup and approved before they are built.
 
