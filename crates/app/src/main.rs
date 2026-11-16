@@ -37,6 +37,7 @@ fn show(window: &MainWindow, shown: model::Shown) {
     window.set_rows(ModelRc::from(Rc::new(VecModel::from(shown.rows))));
     window.set_sort_column(shown.sort.column as i32);
     window.set_sort_ascending(shown.sort.ascending);
+    window.set_filtered(shown.filtered.into());
 }
 
 /// Shows a new reading.
@@ -44,7 +45,7 @@ fn present(window: &MainWindow, snapshot: model::Snapshot) {
     VIEW.with_borrow_mut(|view| show(window, view.update(snapshot)));
 }
 
-/// Art, the first reading, expanding rows and sorting: everything but the desktop and the reader
+/// Art, the first reading, expanding rows, sorting and searching: everything but the desktop and the reader
 /// thread. `toggled` gets the expanded apps' keys whenever an app is expanded or folded, `sorted`
 /// the new order after a click on a column's header.
 fn setup(
@@ -68,6 +69,13 @@ fn setup(
             view.sort
         });
         sorted(sort);
+    });
+    let weak = window.as_weak();
+    window.on_searched(move |text| {
+        VIEW.with_borrow_mut(|view| {
+            view.search = text.into();
+            show(&weak.unwrap(), view.render());
+        });
     });
     let weak = window.as_weak();
     window.on_toggle(move |key| {

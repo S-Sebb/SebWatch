@@ -57,10 +57,12 @@ impl Reader {
         self.drills.retain(|key, _| expanded.contains(key));
         let mut apps = Vec::new();
         for app in &mem.apps {
+            // Every group's processes, for finding an app by PID.
+            let pids: Vec<Vec<u32>> = app.cgroups.iter().map(|g| pids(&root.join(g))).collect();
             // The closed-apps entry has no groups to name it by.
             let named = match app.cgroups.first() {
                 Some(first) => {
-                    let main = main_process(&root.join(first));
+                    let main = pids[0].first().and_then(|&pid| main_process(pid));
                     self.naming.name(first, main.as_deref()).clone()
                 }
                 None => AppName {
@@ -122,6 +124,8 @@ impl Reader {
                     (n, false) => format!("{n} groups"),
                 },
                 icon: named.icon,
+                groups: app.cgroups.iter().map(|g| leaf_name(g)).collect(),
+                pids: pids.concat(),
                 ram: app.ram,
                 zswap: None,
                 swap: app.swap,
@@ -171,10 +175,18 @@ fn leaf_name(group: &Path) -> String {
         .into()
 }
 
-/// Full name of the group's first process, for naming emulators and `systemd-run` units.
-fn main_process(group: &Path) -> Option<String> {
-    let procs = std::fs::read_to_string(group.join("cgroup.procs")).ok()?;
-    let dir = Path::new(PROC_ROOT).join(procs.lines().next()?);
+/// The group's processes; none once it has gone.
+fn pids(group: &Path) -> Vec<u32> {
+    std::fs::read_to_string(group.join("cgroup.procs"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.parse().ok())
+        .collect()
+}
+
+/// Full name of a group's first process, for naming emulators and `systemd-run` units.
+fn main_process(pid: u32) -> Option<String> {
+    let dir = Path::new(PROC_ROOT).join(pid.to_string());
     let comm = std::fs::read_to_string(dir.join("comm")).ok()?;
     Some(processes::full_name(&dir, comm.trim_end_matches('\n')))
 }

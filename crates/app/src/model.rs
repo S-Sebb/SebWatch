@@ -48,6 +48,10 @@ pub struct App {
     pub detail: String,
     /// Icon theme name or absolute path.
     pub icon: String,
+    /// Its cgroups' names, e.g. "app-steam@autostart.service", and their processes: what a search
+    /// finds it by besides its name.
+    pub groups: Vec<String>,
+    pub pids: Vec<u32>,
     /// RAM in use, including its compressed share in zswap.
     pub ram: u64,
     /// That compressed share, when known.
@@ -190,6 +194,8 @@ impl Colours {
 pub struct View {
     last: Option<Snapshot>,
     pub sort: Sort,
+    /// The search field's text: the table lists only the apps it finds, none folded.
+    pub search: String,
     colours: Colours,
     expanded: HashSet<String>,
     icons: Icons,
@@ -203,6 +209,8 @@ pub struct Shown {
     pub tiles: Vec<Tile>,
     pub rows: Vec<Row>,
     pub sort: Sort,
+    /// "Filtered: 5 of 18 apps · …" while searching, else empty.
+    pub filtered: String,
 }
 
 /// The key of the "N more apps" row.
@@ -257,14 +265,35 @@ impl View {
             tiles: tiles(s),
             rows: self.rows(s, &series),
             sort: self.sort,
+            filtered: match self.searching() {
+                Some(query) => format!(
+                    "Filtered: {} of {} apps · the bars show the whole system",
+                    s.apps.iter().filter(|a| matches(a, &query)).count(),
+                    s.apps.len()
+                ),
+                None => String::new(),
+            },
         }
+    }
+
+    /// The search in lower case, `None` for an empty field.
+    fn searching(&self) -> Option<String> {
+        let query = self.search.trim();
+        (!query.is_empty()).then(|| query.to_lowercase())
     }
 
     fn rows(&mut self, s: &Snapshot, series: &Series) -> Vec<Row> {
         let mut rows = Vec::new();
-        let sorted = self.sort.apply(&s.apps);
+        let mut sorted = self.sort.apply(&s.apps);
         let colour = |app: &App| series.get(app.key.as_str()).map_or(-1, |&c| c as i32);
-        let listed = sorted.len().min(LISTED);
+        // A search lists every app it finds, so none hides in the fold.
+        let listed = match self.searching() {
+            Some(query) => {
+                sorted.retain(|a| matches(a, &query));
+                sorted.len()
+            }
+            None => sorted.len().min(LISTED),
+        };
         for app in &sorted[..listed] {
             self.app_rows(&mut rows, app, colour(app));
         }
@@ -342,6 +371,16 @@ impl View {
 }
 
 const NONE: &str = "—";
+
+/// Whether a search (in lower case) finds the app: part of its name or one of its groups' names,
+/// or one of its PIDs in full.
+fn matches(app: &App, query: &str) -> bool {
+    let found = |text: &str| text.to_lowercase().contains(query);
+    found(&app.name)
+        || found(&app.key)
+        || app.groups.iter().any(|g| found(g))
+        || query.parse().is_ok_and(|pid: u32| app.pids.contains(&pid))
+}
 
 /// Each named app's colour slot, by key.
 type Series<'a> = HashMap<&'a str, usize>;
@@ -918,6 +957,38 @@ mod tests {
         assert_eq!(swap[1..], ["Other apps", "Free swap"]);
         assert_eq!(vram[1], "Other apps");
         assert_ne!(swap[0], vram[0]);
+    }
+
+    #[test]
+    fn search_finds_apps_by_name_group_or_pid_folded_or_not() {
+        let mut view = View::default();
+        let all = view.update(crate::sample::snapshot());
+        assert_eq!(all.filtered, "");
+        let find = |view: &mut View, search: &str| {
+            view.search = search.into();
+            let shown = view.render();
+            let names: Vec<String> = shown.rows.iter().map(|r| r.name.to_string()).collect();
+            (names, shown.filtered)
+        };
+        // Konsole, Akonadi and Kate sit in the fold: found, they show without it.
+        let (found, note) = find(&mut view, "K");
+        assert_eq!(
+            found,
+            ["Plasma Workspace", "KWin", "Konsole", "Akonadi", "Kate"]
+        );
+        assert_eq!(
+            note,
+            "Filtered: 5 of 18 apps · the bars show the whole system"
+        );
+        assert_eq!(find(&mut view, "guide35.service").0, ["Android emulator"]);
+        assert_eq!(find(&mut view, " 4130291 ").0, ["Android emulator"]);
+        // A PID is matched whole, not by its digits.
+        assert!(find(&mut view, "413029").0.is_empty());
+        assert_eq!(find(&mut view, "").0.len(), LISTED + 1);
+        // The bars don't change with the search.
+        view.search = "kate".into();
+        let shown = view.render();
+        assert_eq!(names(&shown.memory), names(&all.memory));
     }
 
     #[test]

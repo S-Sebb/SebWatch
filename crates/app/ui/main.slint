@@ -503,25 +503,163 @@ component RowView inherits Rectangle {
     }
 }
 
+// KDE's search line: a magnifier, the hint, a clear button once typed in. Escape clears it.
+component SearchField inherits Rectangle {
+    in-out property <string> text;
+    callback edited(string);
+    height: Theme.picnic ? 30px : 28px;
+    background: Theme.view;
+    border-width: Theme.picnic ? 2px : 1px;
+    border-radius: Theme.picnic ? 0 : 3px;
+    border-color: input.has-focus ? Theme.accent : Theme.picnic ? Theme.line : #00000033;
+
+    public function focus-input() {
+        input.focus();
+        input.select-all();
+    }
+
+    public function clear() {
+        root.text = "";
+        root.edited("");
+    }
+
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 5px;
+        spacing: 6px;
+        VerticalLayout {
+            alignment: center;
+            Path {
+                width: 14px;
+                height: 14px;
+                viewbox-width: 14;
+                viewbox-height: 14;
+                commands: "M 5.5 1 A 4.5 4.5 0 1 1 5.5 10 A 4.5 4.5 0 1 1 5.5 1 M 8.8 8.8 L 13 13";
+                stroke: Theme.picnic ? Theme.fg : Theme.muted;
+                stroke-width: Theme.picnic ? 2px : 1.2px;
+            }
+        }
+        FocusScope {
+            horizontal-stretch: 1;
+            key-pressed(event) => {
+                if event.text == Key.Escape && root.text != "" {
+                    root.clear();
+                    return accept;
+                }
+                reject
+            }
+            if root.text == "": Muted {
+                width: 100%;
+                text: "Search apps, groups or PIDs";
+            }
+            input := TextInput {
+                text <=> root.text;
+                color: Theme.fg;
+                selection-background-color: Theme.selection;
+                selection-foreground-color: Theme.fg;
+                single-line: true;
+                vertical-alignment: center;
+                accessible-label: "Search apps, groups or PIDs";
+                edited => {
+                    root.edited(self.text);
+                }
+            }
+        }
+        if root.text == "": Muted {
+            text: "Ctrl+F";
+            font-size: Theme.small;
+        }
+        if root.text != "": VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                accessible-role: button;
+                accessible-label: "Clear search";
+                accessible-action-default => {
+                    root.clear();
+                }
+                Path {
+                    width: 16px;
+                    height: 16px;
+                    viewbox-width: 16;
+                    viewbox-height: 16;
+                    commands: "M 4.5 4.5 L 11.5 11.5 M 11.5 4.5 L 4.5 11.5";
+                    stroke: Theme.fg;
+                    stroke-width: Theme.picnic ? 2px : 1px;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.clear();
+                    }
+                }
+            }
+        }
+    }
+}
+
 component Table {
     in property <[Row]> rows;
     in-out property <string> selected;
     // The sorted column (0 for RAM in use) and its direction.
     in property <int> sort-column;
     in property <bool> sort-ascending;
+    // "Filtered: 5 of 18 apps · …" while searching, else empty.
+    in property <string> filtered;
+    in-out property <string> search;
     callback toggle(string);
     callback sort(int);
+    callback searched(string);
+
+    public function focus-search() {
+        field.focus-input();
+    }
+
+    public function clear-search() {
+        field.clear();
+    }
+
     property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", "GPU", "VRAM"];
 
     VerticalLayout {
-        if Theme.picnic: HorizontalLayout {
-            padding-left: 14px;
-            padding-right: 14px;
-            padding-bottom: 4px;
-            SectionTitle {
+        // The search line above the table, as in KDE System Monitor; SebChat titles it "Apps".
+        HorizontalLayout {
+            padding-left: Theme.picnic ? 14px : 16px;
+            padding-right: self.padding-left;
+            padding-bottom: 8px;
+            spacing: 12px;
+            if Theme.picnic: SectionTitle {
                 text: "Apps";
             }
-            Muted {
+            field := SearchField {
+                width: 300px;
+                text <=> root.search;
+                edited(text) => {
+                    root.searched(text);
+                }
+            }
+            if root.filtered != "": VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    background: Theme.selection;
+                    border-radius: Theme.picnic ? 0 : 3px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        padding-top: 3px;
+                        padding-bottom: 3px;
+                        Label {
+                            text: root.filtered;
+                            font-size: Theme.small;
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if Theme.picnic: Muted {
                 text: "sorted by " + root.sort-names[root.sort-column];
                 font-size: Theme.small;
                 font-weight: 800;
@@ -622,9 +760,13 @@ export component MainWindow inherits Window {
     in-out property <string> selected;
     in property <int> sort-column;
     in property <bool> sort-ascending;
+    in property <string> filtered;
+    in-out property <string> search;
     callback toggle(string);
     // A click on a column's header, 0 for RAM in use.
     callback sort-clicked(int);
+    // The search field's new text.
+    callback searched(string);
     callback theme-chosen(ThemeChoice);
 
     in property <string> version;
@@ -639,6 +781,7 @@ export component MainWindow inherits Window {
     default-font-family: Theme.font;
     default-font-size: Theme.font-size;
     default-font-weight: Theme.weight;
+    forward-focus: keys;
 
     if Theme.picnic: Image {
         width: 100%;
@@ -649,74 +792,93 @@ export component MainWindow inherits Window {
         image-rendering: pixelated;
     }
 
-    VerticalLayout {
-        padding-top: 14px;
-        spacing: Theme.picnic ? 22px : 14px;
-        HorizontalLayout {
-            padding-left: 16px;
-            padding-right: 16px;
-            spacing: Theme.picnic ? 22px : 16px;
-            vertical-stretch: 0;
-            // The bars' card runs as deep as the tiles beside it.
-            Card {
-                BarView {
-                    bar: root.memory;
-                }
-                Rectangle {
-                    height: Theme.picnic ? 18px : 14px;
-                }
-                BarView {
-                    bar: root.swap;
-                }
-                if root.has-vram: Rectangle {
-                    height: Theme.picnic ? 18px : 14px;
-                }
-                if root.has-vram: BarView {
-                    bar: root.vram;
-                }
-                Rectangle { }
+    // Ctrl+F finds an app from anywhere in the window; Escape clears the search.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.modifiers.control && (event.text == "f" || event.text == "F") {
+                table.focus-search();
+                return accept;
             }
-            // The tiles share out the bars' height, so both columns end on the same line.
-            VerticalLayout {
-                width: 180px;
-                spacing: Theme.picnic ? 14px : 8px;
-                HorizontalLayout {
-                    vertical-stretch: 0;
-                    alignment: end;
-                    MenuButton {
-                        chosen(choice) => {
-                            root.theme-chosen(choice);
+            if event.text == Key.Escape && root.search != "" {
+                table.clear-search();
+                return accept;
+            }
+            reject
+        }
+        VerticalLayout {
+            padding-top: 14px;
+            spacing: Theme.picnic ? 22px : 14px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: Theme.picnic ? 22px : 16px;
+                vertical-stretch: 0;
+                // The bars' card runs as deep as the tiles beside it.
+                Card {
+                    BarView {
+                        bar: root.memory;
+                    }
+                    Rectangle {
+                        height: Theme.picnic ? 18px : 14px;
+                    }
+                    BarView {
+                        bar: root.swap;
+                    }
+                    if root.has-vram: Rectangle {
+                        height: Theme.picnic ? 18px : 14px;
+                    }
+                    if root.has-vram: BarView {
+                        bar: root.vram;
+                    }
+                    Rectangle { }
+                }
+                // The tiles share out the bars' height, so both columns end on the same line.
+                VerticalLayout {
+                    width: 180px;
+                    spacing: Theme.picnic ? 14px : 8px;
+                    HorizontalLayout {
+                        vertical-stretch: 0;
+                        alignment: end;
+                        MenuButton {
+                            chosen(choice) => {
+                                root.theme-chosen(choice);
+                            }
                         }
                     }
-                }
-                for tile in root.tiles: TileView {
-                    tile: tile;
+                    for tile in root.tiles: TileView {
+                        tile: tile;
+                    }
                 }
             }
-        }
-        // Breeze: the table runs edge to edge. SebChat: a card like the others.
-        HorizontalLayout {
-            padding-left: Theme.picnic ? 16px : 0;
-            padding-right: Theme.picnic ? 19px : 0;
-            padding-bottom: Theme.picnic ? 19px : 0;
-            vertical-stretch: 1;
-            Card {
-                inset: 0;
-                VerticalLayout {
-                    padding-top: Theme.picnic ? 12px : 0;
-                    padding-bottom: Theme.picnic ? 6px : 0;
-                    padding-left: Theme.picnic ? 3px : 0;
-                    padding-right: Theme.picnic ? 3px : 0;
-                    Table {
-                        rows: root.rows;
-                        selected <=> root.selected;
-                        sort-column: root.sort-column;
-                        sort-ascending: root.sort-ascending;
-                        toggle(key) => {
-                            root.toggle(key);
-                        }
-                        sort(column) => {
-                            root.sort-clicked(column);
+            // Breeze: the table runs edge to edge. SebChat: a card like the others.
+            HorizontalLayout {
+                padding-left: Theme.picnic ? 16px : 0;
+                padding-right: Theme.picnic ? 19px : 0;
+                padding-bottom: Theme.picnic ? 19px : 0;
+                vertical-stretch: 1;
+                Card {
+                    inset: 0;
+                    VerticalLayout {
+                        padding-top: Theme.picnic ? 12px : 0;
+                        padding-bottom: Theme.picnic ? 6px : 0;
+                        padding-left: Theme.picnic ? 3px : 0;
+                        padding-right: Theme.picnic ? 3px : 0;
+                        table := Table {
+                            rows: root.rows;
+                            selected <=> root.selected;
+                            sort-column: root.sort-column;
+                            sort-ascending: root.sort-ascending;
+                            toggle(key) => {
+                                root.toggle(key);
+                            }
+                            sort(column) => {
+                                root.sort-clicked(column);
+                            }
+                            filtered: root.filtered;
+                            search <=> root.search;
+                            searched(text) => {
+                                root.searched(text);
+                            }
                         }
                     }
                 }

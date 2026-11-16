@@ -77,7 +77,8 @@ Top to bottom:
    theme.
 5. **App table.** Name and icon, RAM in use, swapped out, file cache, CPU in cores, disk, GPU
    and VRAM, sorted by RAM; click a column's header to sort by it, again to reverse. An app
-   keeps one colour in every bar and in the table. Expand an app to see its processes, and an app made of several
+   keeps one colour in every bar and in the table. Press Ctrl+F to find an app by name, group or
+   PID. Expand an app to see its processes, and an app made of several
    groups (17 Claude agents, say) group by group.
 
 [docs/accounting.md](docs/accounting.md) says where every number comes from.
