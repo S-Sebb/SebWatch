@@ -33,10 +33,13 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
 - **0.2 mockups (Seb, 2026-11-16):** the window is laid out as proper cards (#66): tiles, one card
   for the bars and one Apps card holding the search line and the table, all with the same outer
   margins; the top and bottom cards line up on both sides, so the menu button no longer takes
-  space to the right of the top card. Selecting a row (a click; only the arrow expands it) shows
+  space to the right of the top card; it sits in the top-right corner inside the bars card. Selecting a row (a click; only the arrow expands it) shows
   "End <name>" and "Kill <name>" buttons beside the search box, and the row's right-click menu
   has both too (#63, #42). Pause freezes the whole window (#42). Swap and memory pressure are
   explained in an ⓘ popup by the Swap title, with a "Memory pressure high" chip beside it (#11).
   The Intel iGPU shares the GPU tile with NVIDIA, and the table has "Intel" and "NVIDIA" GPU
   columns (#10). The Name column stays fixed while the value columns scroll sideways (#56).
-  Explanations on headers and tiles must be concise and clear (#41).
+  Explanations on headers and tiles are one short sentence each, concise and clear, without
+  "not X" asides such as "not disk space" (#41). VRAM is "dedicated GPU memory", never
+  "NVIDIA GPU memory". Foreground testing stopped: tests must not open windows on or take focus
+  from Seb's desktop (Seb, 2026-11-16).
