@@ -2,6 +2,7 @@
 
 pub mod cgroup;
 pub mod cpu_io;
+pub mod drm;
 pub mod memory;
 pub mod naming;
 pub mod nvidia;

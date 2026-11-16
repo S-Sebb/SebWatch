@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# Removes what scripts/install put into PREFIX (default ~/.local), giving Win+Esc back to System Monitor.
+# Removes what scripts/install put into PREFIX (default ~/.local).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 prefix=${1:-$HOME/.local}
 
-if [ "$prefix" = "$HOME/.local" ] && [ -x "$prefix/bin/sebwatch" ]; then
-    "$prefix/bin/sebwatch" --unbind-win-esc && echo "Win+Esc opens System Monitor again" || echo "Win+Esc unchanged (KDE Plasma only)"
-fi
 rm -f "$prefix/bin/sebwatch" "$prefix/share/applications/sebwatch.desktop"
 for icon in art/icons/hicolor/*/apps/sebwatch.png; do
     rm -f "$prefix/share/icons/${icon#art/icons/}"

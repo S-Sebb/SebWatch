@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable};
+use crate::model::{App, Closed, Exited, Igpu, Part, Snapshot, Unreadable};
 
 const K: f64 = 1024.0;
 const M: f64 = K * K;
@@ -38,6 +38,8 @@ fn app(
         cpu,
         disk_per_s: Some(disk),
         gpu_percent: None,
+        igpu_percent: None,
+        igpu_unreadable: false,
         vram: None,
         parts: Vec::new(),
         unattributed_ram: 0,
@@ -108,6 +110,7 @@ pub fn snapshot() -> Snapshot {
         },
         App {
             gpu_percent: Some(2.0),
+            igpu_percent: Some(4.0),
             vram: Some(b(118.0, M)),
             ..app(
                 "Zen Browser",
@@ -122,6 +125,7 @@ pub fn snapshot() -> Snapshot {
         },
         App {
             gpu_percent: Some(1.0),
+            igpu_percent: Some(1.0),
             vram: Some(b(64.0, M)),
             ..app(
                 "T3 Code",
@@ -134,16 +138,19 @@ pub fn snapshot() -> Snapshot {
                 b(3.5, M),
             )
         },
-        app(
-            "Steam",
-            "",
-            "steam",
-            b(441.0, M),
-            b(1.6, G),
-            b(74.0, M),
-            0.24,
-            0,
-        ),
+        App {
+            igpu_percent: Some(0.0),
+            ..app(
+                "Steam",
+                "",
+                "steam",
+                b(441.0, M),
+                b(1.6, G),
+                b(74.0, M),
+                0.24,
+                0,
+            )
+        },
         app(
             "OpenCode agents",
             "",
@@ -154,26 +161,32 @@ pub fn snapshot() -> Snapshot {
             0.01,
             0,
         ),
-        app(
-            "Plasma Workspace",
-            "",
-            "plasmashell",
-            b(293.0, M),
-            b(379.0, M),
-            b(6.0, M),
-            0.0,
-            0,
-        ),
-        app(
-            "WeChat",
-            "",
-            "/opt/wechat/icons/wechat.png",
-            b(212.0, M),
-            b(1.4, G),
-            b(58.0, M),
-            0.0,
-            0,
-        ),
+        App {
+            igpu_percent: Some(3.0),
+            ..app(
+                "Plasma Workspace",
+                "",
+                "plasmashell",
+                b(293.0, M),
+                b(379.0, M),
+                b(6.0, M),
+                0.0,
+                0,
+            )
+        },
+        App {
+            igpu_percent: Some(1.0),
+            ..app(
+                "WeChat",
+                "",
+                "/opt/wechat/icons/wechat.png",
+                b(212.0, M),
+                b(1.4, G),
+                b(58.0, M),
+                0.0,
+                0,
+            )
+        },
         app(
             "Discord",
             "",
@@ -196,6 +209,8 @@ pub fn snapshot() -> Snapshot {
         ),
         App {
             gpu_percent: Some(1.0),
+            // KWin's own GPU clients can't be read (`drm.rs`).
+            igpu_unreadable: true,
             vram: Some(b(11.0, M)),
             ..app(
                 "KWin",
@@ -291,6 +306,10 @@ pub fn snapshot() -> Snapshot {
         cpu_used: Some(2.6),
         cpu_cores: 16,
         nvidia_percent: Some(0.0),
+        igpu: Some(Igpu {
+            vendor: "Intel".into(),
+            percent: 14.0,
+        }),
         vram: Some((b(0.3, G), b(8.0, G))),
         gpu_asleep: false,
         nvidia_unavailable: false,
@@ -384,6 +403,9 @@ pub fn minute(last: fn() -> Snapshot, start: Instant) -> Vec<Snapshot> {
                     _ => wave(15.0, 6.0, 0.0, i),
                 };
                 s.cpu_used = Some(cpu / 100.0 * s.cpu_cores as f32);
+                if let Some(igpu) = &mut s.igpu {
+                    igpu.percent = wave(12.0, 6.0, 5.0, i);
+                }
                 if !s.gpu_asleep {
                     s.nvidia_percent = s.nvidia_percent.map(|_| wave(2.0, 2.0, 3.0, i));
                 }

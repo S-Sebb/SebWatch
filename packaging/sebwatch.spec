@@ -40,21 +40,6 @@ for icon in art/icons/hicolor/*/apps/sebwatch.png; do
 done
 install -Dm644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
 
-# Win+Esc opens SebWatch instead of System Monitor for whoever ran `sudo dnf install`, in their
-# running Plasma session, and goes back to System Monitor on removal. Without one (dnf from
-# Discover, no Plasma) nothing changes: `sebwatch --bind-win-esc` binds it by hand.
-%post
-if [ $1 -eq 1 ] && [ -n "${SUDO_USER:-}" ]; then
-    runuser -u "$SUDO_USER" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$SUDO_USER")/bus" \
-        %{_bindir}/sebwatch --bind-win-esc >/dev/null 2>&1 || :
-fi
-
-%preun
-if [ $1 -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
-    runuser -u "$SUDO_USER" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$SUDO_USER")/bus" \
-        %{_bindir}/sebwatch --unbind-win-esc >/dev/null 2>&1 || :
-fi
-
 %files
 %dir %{_datadir}/licenses/%{name}
 %license %{_datadir}/licenses/%{name}/LICENSE

@@ -6,6 +6,9 @@ use std::time::Instant;
 
 use crate::REFRESH;
 
+/// Graphed series, one per `Measure`.
+pub const MEASURES: usize = 5;
+
 /// Readings in a tile's graph: the last 60 s at one per refresh.
 pub const SAMPLES: usize = 30;
 
@@ -16,11 +19,13 @@ pub enum Measure {
     Gpu,
     Vram,
     Disk,
+    /// The Intel or AMD GPU (`drm.rs`), beside the NVIDIA one.
+    Igpu,
 }
 
 /// Each series' readings as a share of its whole (Disk in bytes/s), `None` where there was none.
 pub struct History {
-    rings: [[Option<f32>; SAMPLES]; 4],
+    rings: [[Option<f32>; SAMPLES]; MEASURES],
     /// The slot of the newest reading.
     newest: usize,
     last: Option<Instant>,
@@ -29,7 +34,7 @@ pub struct History {
 impl Default for History {
     fn default() -> Self {
         Self {
-            rings: [[None; SAMPLES]; 4],
+            rings: [[None; SAMPLES]; MEASURES],
             newest: 0,
             last: None,
         }
@@ -39,7 +44,7 @@ impl Default for History {
 impl History {
     /// Adds a reading taken at `at`, after one gap per refresh missed since the last. A reading
     /// less than half a refresh after the last (an app expanded) replaces it.
-    pub fn push(&mut self, at: Instant, readings: [Option<f32>; 4]) {
+    pub fn push(&mut self, at: Instant, readings: [Option<f32>; MEASURES]) {
         let steps = match self.last {
             Some(last) => {
                 let elapsed = at.saturating_duration_since(last).as_secs_f32();
@@ -48,7 +53,7 @@ impl History {
             None => 1,
         };
         for _ in 1..steps.min(SAMPLES + 1) {
-            self.advance([None; 4]);
+            self.advance([None; MEASURES]);
         }
         if steps == 0 {
             self.set(readings);
@@ -58,12 +63,12 @@ impl History {
         }
     }
 
-    fn advance(&mut self, readings: [Option<f32>; 4]) {
+    fn advance(&mut self, readings: [Option<f32>; MEASURES]) {
         self.newest = (self.newest + 1) % SAMPLES;
         self.set(readings);
     }
 
-    fn set(&mut self, readings: [Option<f32>; 4]) {
+    fn set(&mut self, readings: [Option<f32>; MEASURES]) {
         for (ring, reading) in self.rings.iter_mut().zip(readings) {
             ring[self.newest] = reading;
         }
@@ -135,7 +140,10 @@ mod tests {
         let start = Instant::now();
         let mut history = History::default();
         for i in 0..40 {
-            history.push(start + REFRESH * i, [Some(i as f32), None, None, None]);
+            history.push(
+                start + REFRESH * i,
+                [Some(i as f32), None, None, None, None],
+            );
         }
         let expected: Vec<_> = (10..40).map(|i| Some(i as f32)).collect();
         assert_eq!(cpu(&history), expected);
@@ -145,10 +153,10 @@ mod tests {
     fn a_pause_leaves_a_gap_and_a_long_one_restarts() {
         let start = Instant::now();
         let mut history = History::default();
-        history.push(start, [Some(1.0); 4]);
-        history.push(start + REFRESH, [Some(2.0); 4]);
+        history.push(start, [Some(1.0); MEASURES]);
+        history.push(start + REFRESH, [Some(2.0); MEASURES]);
         // Minimised for three refreshes.
-        history.push(start + REFRESH * 4, [Some(3.0); 4]);
+        history.push(start + REFRESH * 4, [Some(3.0); MEASURES]);
         let readings = cpu(&history);
         assert_eq!(
             readings[SAMPLES - 5..],
@@ -163,7 +171,7 @@ mod tests {
         assert_eq!(area.matches('Z').count(), 1);
 
         // Ten minutes away: only the newest reading is left, no line yet.
-        history.push(start + REFRESH * 300, [Some(4.0); 4]);
+        history.push(start + REFRESH * 300, [Some(4.0); MEASURES]);
         assert_eq!(cpu(&history).iter().flatten().count(), 1);
         assert_eq!(history.graph(Measure::Cpu), (String::new(), String::new()));
     }
@@ -172,9 +180,9 @@ mod tests {
     fn a_reading_right_after_another_replaces_it() {
         let start = Instant::now();
         let mut history = History::default();
-        history.push(start, [Some(1.0); 4]);
-        history.push(start + Duration::from_millis(300), [Some(2.0); 4]);
-        history.push(start + REFRESH, [Some(3.0); 4]);
+        history.push(start, [Some(1.0); MEASURES]);
+        history.push(start + Duration::from_millis(300), [Some(2.0); MEASURES]);
+        history.push(start + REFRESH, [Some(3.0); MEASURES]);
         assert_eq!(cpu(&history)[SAMPLES - 2..], [Some(2.0), Some(3.0)]);
     }
 
@@ -183,7 +191,10 @@ mod tests {
         let start = Instant::now();
         let mut history = History::default();
         for (i, disk) in [0.0, 5e6, 10e6].into_iter().enumerate() {
-            history.push(start + REFRESH * i as u32, [None, None, None, Some(disk)]);
+            history.push(
+                start + REFRESH * i as u32,
+                [None, None, None, Some(disk), None],
+            );
         }
         let (line, _) = history.graph(Measure::Disk);
         assert_eq!(line, "M 270 98.0 L 280 55.0 L 290 10.0");

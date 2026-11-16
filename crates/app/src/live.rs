@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sebwatch_core::cpu_io::{self, Rates, Sample};
+use sebwatch_core::drm;
 use sebwatch_core::memory::{self, CGROUP_ROOT, PROC_ROOT};
 use sebwatch_core::naming::Naming;
 use sebwatch_core::nvidia::{self, Nvidia};
 use sebwatch_core::processes;
 
-use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable, Unsplit};
+use crate::model::{App, Closed, Exited, Igpu, Part, Snapshot, Unreadable, Unsplit};
 
 pub struct Reader {
     naming: Naming,
@@ -24,6 +25,57 @@ pub struct Reader {
     split: bool,
     /// The last NVIDIA reading and when it was taken, reused while the next NVML read isn't due.
     gpu: Option<(Instant, Nvidia)>,
+    /// The Intel or AMD GPU, if there is one.
+    igpu: Option<IgpuReader>,
+}
+
+struct IgpuReader {
+    device: drm::Device,
+    scanner: drm::Scanner,
+    uid: u32,
+    /// The last sample, to turn the next into busy shares.
+    last: Option<(Instant, drm::Sample)>,
+}
+
+/// The Intel or AMD GPU as read this refresh: its use since the last, and the groups with
+/// processes that couldn't be read.
+struct IgpuReading {
+    vendor: &'static str,
+    usage: drm::Usage,
+    unreadable: std::collections::BTreeSet<PathBuf>,
+}
+
+impl IgpuReader {
+    fn new() -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            device: drm::find_device(Path::new("/sys/class/drm"))?,
+            scanner: drm::Scanner::default(),
+            uid: std::fs::metadata(Path::new(PROC_ROOT).join("self"))
+                .ok()?
+                .uid(),
+            last: None,
+        })
+    }
+
+    /// The first call shows no use: busy shares need two samples.
+    fn read(&mut self) -> IgpuReading {
+        let now = Instant::now();
+        let sample = self
+            .scanner
+            .read(Path::new(PROC_ROOT), self.uid, &self.device);
+        let usage = match &self.last {
+            Some((then, before)) => drm::usage(before, &sample, now - *then),
+            None => drm::usage(&sample, &sample, Duration::ZERO),
+        };
+        let unreadable = sample.unreadable.clone();
+        self.last = Some((now, sample));
+        IgpuReading {
+            vendor: self.device.vendor,
+            usage,
+            unreadable,
+        }
+    }
 }
 
 /// The NVIDIA GPU as read this refresh.
@@ -89,6 +141,7 @@ impl Reader {
             cores: std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
             split: memory::splits_by_app(Path::new(CGROUP_ROOT)),
             gpu: None,
+            igpu: IgpuReader::new(),
         }
     }
 
@@ -142,6 +195,7 @@ impl Reader {
             asleep,
             unavailable,
         } = self.read_gpu(interval);
+        let igpu = self.igpu.as_mut().map(IgpuReader::read);
 
         let rate = |group: &PathBuf| rates.get(group).copied().unwrap_or_default();
         // Processes are read only for expanded apps; one that folds up forgets its last sample.
@@ -161,6 +215,25 @@ impl Reader {
                 let gpu = gpu.as_ref()?;
                 let used: Vec<_> = app.cgroups.iter().filter_map(|g| gpu.apps.get(g)).collect();
                 (!used.is_empty()).then(|| used.into_iter().map(f).sum::<f64>())
+            };
+            // Its clients' busy % on the Intel or AMD GPU, summed over its groups. Unknown when
+            // some process couldn't be read and none read was busy (KWin, whose own fds are closed).
+            let (igpu_percent, igpu_unreadable) = match &igpu {
+                Some(r) => {
+                    let used: Vec<_> = app
+                        .cgroups
+                        .iter()
+                        .filter_map(|g| r.usage.apps.get(g))
+                        .collect();
+                    let busy: f64 = used.iter().map(|u| u.busy_percent).sum();
+                    let unreadable = app.cgroups.iter().any(|g| r.unreadable.contains(g));
+                    match (used.is_empty(), unreadable && busy == 0.0) {
+                        (_, true) => (None, true),
+                        (true, false) => (None, false),
+                        (false, false) => (Some(busy.min(100.0) as f32), false),
+                    }
+                }
+                None => (None, false),
             };
             let (mut parts, mut unattributed_ram, mut unattributed_swap) = (Vec::new(), 0, 0);
             let (mut over_charge, mut unreadable) = (0, Vec::new());
@@ -233,6 +306,8 @@ impl Reader {
                 cpu: app.cgroups.iter().map(|g| rate(g).cpu_cores as f32).sum(),
                 disk_per_s: sum_known(app.cgroups.iter().map(|g| disk(&rate(g)))),
                 gpu_percent: usage(|u| u.sm_percent).map(|p| p as f32),
+                igpu_percent,
+                igpu_unreadable,
                 vram: usage(|u| u.vram_bytes as f64).map(|b| b as u64),
                 parts,
                 unattributed_ram,
@@ -258,6 +333,7 @@ impl Reader {
                 Some(g) => Some(g.utilization_percent.unwrap_or(0) as f32),
                 None => asleep.then_some(0.0),
             },
+            igpu: igpu.map(igpu_total),
             vram: gpu
                 .as_ref()
                 .map(|g| (g.vram_used_bytes, g.vram_total_bytes)),
@@ -278,6 +354,7 @@ impl Reader {
             asleep,
             unavailable,
         } = self.read_gpu(interval);
+        let igpu = self.igpu.as_mut().map(IgpuReader::read);
         let (swap_total, swap_free) = swap();
         Ok(Snapshot {
             taken,
@@ -297,6 +374,7 @@ impl Reader {
                 Some(g) => Some(g.utilization_percent.unwrap_or(0) as f32),
                 None => asleep.then_some(0.0),
             },
+            igpu: igpu.map(igpu_total),
             vram: gpu
                 .as_ref()
                 .map(|g| (g.vram_used_bytes, g.vram_total_bytes)),
@@ -337,6 +415,13 @@ impl Reader {
             file_cache: entry.file_cache,
             exited,
         }
+    }
+}
+
+fn igpu_total(r: IgpuReading) -> Igpu {
+    Igpu {
+        vendor: r.vendor.into(),
+        percent: r.usage.busy_percent as f32,
     }
 }
 

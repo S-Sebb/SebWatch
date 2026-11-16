@@ -136,8 +136,37 @@ the cgroup root, the same key the memory numbers use.
 
   PIDs map to apps through `/proc/<pid>/cgroup` (`0::/<path>`), the same key as CPU and disk;
   each app's numbers are the sum over its processes.
-- **Intel / AMD**: DRM fdinfo (`/proc/<pid>/fdinfo/*` with `drm-driver`): `drm-engine-*`
-  busy time and `drm-memory-*` / `drm-resident-*` per client, deduplicated by `drm-client-id`.
+- **Intel / AMD** (`crates/core/src/drm.rs`): the GPU is the first card under `/sys/class/drm`
+  whose driver is `i915` or `xe` ("Intel") or `amdgpu` ("AMD"), the boot display one first.
+  Each open DRM file is a client listed in `/proc/<pid>/fdinfo/<fd>`; only clients whose
+  `drm-pdev` is that GPU count.
+
+  | Figure | Source |
+  |---|---|
+  | Busy % per app | each engine's `drm-engine-<name>` ns increase over the refresh, divided by the interval and by `drm-engine-capacity-<name>` (default 1), summed over the app's clients; the busiest engine (usually render), as `intel_gpu_top` shows a client |
+  | GPU tile | the same over every client read |
+  | GPU memory per app | `drm-resident-<region>` summed, else the older `drm-memory-<region>`; read but not shown |
+
+  - **Clients**: a client is counted once by `drm-client-id`, for the lowest PID holding it (fds
+    passed to a child or duplicated); its PID maps to the app through `/proc/<pid>/cgroup` as
+    for NVIDIA. A client new since the last refresh shows no busy time for one refresh.
+  - **Only the user's own processes**: another user's fds can't be read. Neither can a process
+    of the user's that has extra privileges: the kernel makes it non-dumpable. **KWin**
+    (`kwin_wayland` holds `CAP_SYS_NICE`) is one, so its compositing, usually most of the
+    iGPU's work, is in neither its row nor the tile. An app with an unreadable process whose
+    readable clients were idle shows "n/a" rather than "—" or "0" (KWin). Other users'
+    processes (system services) aren't looked at and show "—".
+  - **Memory** on i915 is charged to the app's cgroup: buffers are shmem pages, charged to the
+    process that allocates them, so they are already in its RAM in use (`shmem`). Checked
+    2026-11-17: `glxgears` alone in a scope held 59 MB `drm-resident-system0` and its scope's
+    `memory.stat` had 74 MB `shmem` beside 9 MB `anon`. That is why the window doesn't add it
+    anywhere and the VRAM bar, tile and column stay NVIDIA's. `xe` and `amdgpu` keep system
+    memory in TTM pages, which (unverified here, no such GPU) count in Kernel, drivers and
+    unattributed instead.
+  - **Cost**: finding a process's DRM files means a `readlink` of every open fd, about 13 000 on
+    a desktop (27 ms). `drm::Scanner` remembers each process's DRM fds and searches only new
+    processes, and every process every 15th refresh (30 s), so a running process that opens the
+    GPU late shows within 30 s; a refresh otherwise takes about 3 ms.
 
 ## In the window (`crates/app/src/model.rs`, `live.rs`)
 
@@ -163,14 +192,20 @@ the cgroup root, the same key the memory numbers use.
   legend.
 - Sizes are binary with KDE's short names (1 GB = 1024 MB); a unit steps up at 1000 of the one
   below, so no figure has four digits.
-- CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %.
-  A sleeping NVIDIA GPU isn't read: the GPU and VRAM tiles say it is asleep, and the table's
-  GPU and VRAM columns show "—". Disk tile: every app's read + write.
+- CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %;
+  with an Intel or AMD GPU, that GPU's busy % first and the NVIDIA one's beside it, each named
+  by vendor ("Intel", "NVIDIA") with a dot keyed to its graph line, and the table's GPU column
+  becomes two headed "Intel" (or "AMD") and "NVIDIA". With only an Intel or AMD GPU the tile
+  shows it alone. A sleeping NVIDIA GPU isn't read: the GPU and VRAM tiles say it is asleep
+  ("NVIDIA asleep" beside the Intel figure), and the table's NVIDIA and VRAM columns show "—";
+  an NVIDIA driver that doesn't answer leaves "NVIDIA n/a" beside it. Disk tile: every app's
+  read + write.
 - **Search** matches an app's display name, its grouping name and its groups' names (part of
   them, any case), or a whole PID from its groups' `cgroup.procs`, read every refresh for every
   app (the first group's was already read to name the app).
 - Each tile's graph is its last 30 readings (60 s at 2 s), kept in memory only: CPU and GPU as
-  a share of the whole, VRAM of its total, Disk scaled to its own peak in that minute. A
+  a share of the whole (the GPU tile's Intel or AMD line filled, the NVIDIA one a line beside
+  it), VRAM of its total, Disk scaled to its own peak in that minute. A
   refresh that didn't happen (the window minimised, a failed reading) is a gap, not a line
   across it; a sleeping GPU's tiles have no graph.
 - **Zero, unavailable and stale.** "0" is a reading of zero and "—" a figure that doesn't apply
