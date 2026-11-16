@@ -298,8 +298,8 @@ component TileView inherits Card {
     accessible-role: groupbox;
     accessible-label: self.tile.name;
     accessible-description: self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit;
-    // Tiles with a graph share out the bars' height; a sleeping GPU's tiles keep to their words.
-    vertical-stretch: self.tile.graphed ? 1 : 0;
+    // Every tile the same size, graph or not, sharing out the bars' height.
+    vertical-stretch: 1;
     Rectangle {
         background: Theme.picnic ? transparent : Theme.view;
         border-width: Theme.picnic ? 0 : 1px;
@@ -309,7 +309,7 @@ component TileView inherits Card {
         VerticalLayout {
             padding-top: Theme.picnic ? 0 : 7px;
             // Breeze keeps a near-zero line clear of the tile's border.
-            padding-bottom: Theme.picnic ? 0 : root.tile.graphed ? 3px : 9px;
+            padding-bottom: Theme.picnic ? 0 : 3px;
             spacing: 2px;
             VerticalLayout {
                 padding-left: Theme.picnic ? 0 : 10px;
@@ -320,8 +320,8 @@ component TileView inherits Card {
                     font-size: Theme.small;
                     font-weight: Theme.picnic ? 800 : 400;
                 }
-                // No value while the GPU sleeps: the unit says so.
-                if root.tile.value != "": Label {
+                // No value while the GPU sleeps (the unit says so), but the same room for it.
+                Label {
                     text: root.tile.value;
                     font-family: Theme.picnic ? "Jersey 10" : "";
                     font-size: Theme.picnic ? 32px : 22px;
@@ -333,8 +333,9 @@ component TileView inherits Card {
                     font-size: Theme.small;
                 }
             }
-            // The last minute along the bottom, below the words so no line runs under them.
-            if root.tile.graphed: Rectangle {
+            // The last minute along the bottom, below the words so no line runs under them;
+            // the same room left empty without a graph.
+            Rectangle {
                 min-height: 16px;
                 vertical-stretch: 1;
                 if root.tile.area != "": Path {
@@ -1127,7 +1128,12 @@ export component MainWindow inherits Window {
     preferred-height: 850px;
     min-width: 760px;
     // The bars' width: the window less the page's padding, the tiles' column and the card's inset.
-    property <length> bar-width: self.width - 32px - (Theme.picnic ? 22px : 16px) - 180px - (Theme.picnic ? 28px : 0);
+    // A window wide enough for the tiles two by two beside one-line legends.
+    property <bool> wide: self.width >= 1400px;
+    property <length> tiles-width: self.wide ? 2 * 180px + (Theme.picnic ? 14px : 8px) : 180px;
+    // The bars' width: the window less the page's padding, the tiles, the menu button, the gaps
+    // between them and the card's inset.
+    property <length> bar-width: self.width - 32px - 2 * (Theme.picnic ? 22px : 16px) - self.tiles-width - 30px - (Theme.picnic ? 28px : 0);
     min-height: 480px;
     background: Theme.bg;
     default-font-family: Theme.font;
@@ -1222,44 +1228,52 @@ export component MainWindow inherits Window {
                     padding-right: 16px;
                     spacing: Theme.picnic ? 22px : 16px;
                     vertical-stretch: 0;
-                    // The bars' card runs as deep as the tiles beside it.
+                    // As short as the taller of the tiles and the bars allow, leaving the rest
+                    // to the table.
+                    height: self.min-height;
+                    // The tiles first, two by two in a wide window, so the top stays as short
+                    // as the bars; they share out the bars' height when the bars are taller.
+                    GridLayout {
+                        width: root.tiles-width;
+                        spacing: Theme.picnic ? 14px : 8px;
+                        for tile[i] in root.tiles: TileView {
+                            tile: tile;
+                            row: root.wide ? floor(i / 2) : i;
+                            col: root.wide ? mod(i, 2) : 0;
+                        }
+                    }
+                    // The bars' card runs as deep as the tiles beside it; the bars share out
+                    // the spare height in equal gaps, so the last legend ends on the card's edge.
                     Card {
                         BarView {
                             bar: root.memory;
                             bar-width: root.bar-width;
                         }
                         Rectangle {
-                            height: Theme.picnic ? 18px : 14px;
+                            min-height: Theme.picnic ? 18px : 14px;
+                            vertical-stretch: 1;
                         }
                         BarView {
                             bar: root.swap;
                             bar-width: root.bar-width;
                         }
                         if root.has-vram: Rectangle {
-                            height: Theme.picnic ? 18px : 14px;
+                            min-height: Theme.picnic ? 18px : 14px;
+                            vertical-stretch: 1;
                         }
                         if root.has-vram: BarView {
                             bar: root.vram;
                             bar-width: root.bar-width;
                         }
-                        Rectangle { }
                     }
-                    // The tiles share out the bars' height, so both columns end on the same line.
                     VerticalLayout {
-                        width: 180px;
-                        spacing: Theme.picnic ? 14px : 8px;
-                        HorizontalLayout {
-                            vertical-stretch: 0;
-                            alignment: end;
-                            MenuButton {
-                                chosen(choice) => {
-                                    root.theme-chosen(choice);
-                                }
+                        vertical-stretch: 0;
+                        MenuButton {
+                            chosen(choice) => {
+                                root.theme-chosen(choice);
                             }
                         }
-                        for tile in root.tiles: TileView {
-                            tile: tile;
-                        }
+                        Rectangle { }
                     }
                 }
                 // Breeze: the table runs edge to edge. SebChat: a card like the others.
