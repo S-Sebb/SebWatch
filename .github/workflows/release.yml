@@ -1,0 +1,88 @@
+name: Release packages
+
+# A pushed vX.Y.Z tag builds the rpm and the AppImage, tests them and attaches them to that tag's
+# release. The release itself, with its patch notes, is made by hand (docs/release.md); if it
+# doesn't exist yet, the job makes a draft, so nothing is ever published from here. Run by hand
+# (workflow_dispatch) or on a PR, it builds and tests both and keeps them as the run's artifacts only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  # A PR that changes how the packages build builds and tests them the same way.
+  pull_request:
+    paths: [".github/workflows/release.yml", "packaging/**", "scripts/package", "scripts/test-packages", "Cargo.toml", "Cargo.lock"]
+
+jobs:
+  rpm:
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    steps:
+      - name: Install build tools
+        run: dnf -y install git cargo rust gcc rpm-build fontconfig-devel freetype-devel libxkbcommon-devel
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: scripts/package rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: target/packages/*.rpm
+          if-no-files-found: error
+
+  appimage:
+    # The oldest supported runner: the AppImage needs a glibc at least as new as the build's.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libfontconfig1-dev libxkbcommon-dev
+      - name: Build
+        run: scripts/package appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: target/packages/*.AppImage
+          if-no-files-found: error
+
+  test:
+    needs: [rpm, appimage]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: target/packages
+          merge-multiple: true
+      - name: Test in Fedora and Ubuntu containers
+        run: chmod +x target/packages/*.AppImage && scripts/test-packages
+      - name: Logs
+        if: failure()
+        run: tail -n 100 target/logs/packages-*.log
+
+  attach:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Check the tag matches the version
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          [ "$TAG" = "v$version" ] || { echo "Tag $TAG but Cargo.toml says $version"; exit 1; }
+      - name: Attach to the release
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --draft --verify-tag --title "SebWatch ${TAG#v}" --notes ""
+          gh release upload "$TAG" packages/* --clobber

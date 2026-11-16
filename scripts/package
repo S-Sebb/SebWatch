@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Builds the release binary and packs it: `rpm` (needs rpmbuild; build it on Fedora) or
+# `appimage` (fetches linuxdeploy; build it on an old distribution, since the AppImage runs only
+# where glibc is at least as new as the build's). Files from scripts/install, version from the
+# workspace Cargo.toml. Writes target/packages/sebwatch-X.Y.Z-1.x86_64.rpm or
+# target/packages/SebWatch-X.Y.Z-x86_64.AppImage and prints its path.
+# Usage: scripts/package rpm|appimage
+set -euo pipefail
+cd "$(dirname "$0")/.."
+kind=${1:?usage: scripts/package rpm|appimage}
+version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+out=$PWD/target/packages
+mkdir -p "$out"
+
+cargo build --release --locked -p sebwatch
+
+case $kind in
+rpm)
+    top=$PWD/target/rpmbuild
+    rpmbuild -bb packaging/sebwatch.spec --define "_topdir $top" --define "_sourcedir $PWD" \
+        --define "pkg_version $version" >&2
+    cp "$top/RPMS/x86_64/sebwatch-$version-1.x86_64.rpm" "$out/"
+    echo "$out/sebwatch-$version-1.x86_64.rpm"
+    ;;
+appimage)
+    # A pinned linuxdeploy, so a release builds the same way each time.
+    tools=$PWD/target/tools
+    url=https://github.com/linuxdeploy
+    mkdir -p "$tools"
+    for tool in linuxdeploy/1-alpha-20251107-1/linuxdeploy \
+        linuxdeploy-plugin-appimage/1-alpha-20250213-1/linuxdeploy-plugin-appimage; do
+        file=$tools/${tool##*/}-x86_64.AppImage
+        [ -x "$file" ] || { curl -fsSL -o "$file" "$url/${tool%/*/*}/releases/download/${tool#*/}-x86_64.AppImage" && chmod +x "$file"; }
+    done
+    appdir=$PWD/target/AppDir
+    rm -rf "$appdir"
+    for icon in art/icons/hicolor/*/apps/sebwatch.png; do
+        install -Dm644 "$icon" "$appdir/usr/share/icons/${icon#art/icons/}"
+    done
+    # linuxdeploy copies the libraries the binary links, minus those every desktop has (glibc,
+    # GL, X11, Wayland, fontconfig, its excludelist), so the host's GL driver is the one used.
+    cd "$out"
+    export PATH=$tools:$PATH
+    rm -f "SebWatch-$version-x86_64.AppImage"
+    APPIMAGE_EXTRACT_AND_RUN=1 LINUXDEPLOY_OUTPUT_VERSION=$version ARCH=x86_64 \
+        "$tools/linuxdeploy-x86_64.AppImage" --appdir "$appdir" \
+        --executable "$OLDPWD/target/release/sebwatch" \
+        --desktop-file "$OLDPWD/packaging/sebwatch.desktop" \
+        --icon-file "$OLDPWD/art/icons/hicolor/256x256/apps/sebwatch.png" \
+        --output appimage >&2
+    echo "$out/SebWatch-$version-x86_64.AppImage"
+    ;;
+*) echo "usage: scripts/package rpm|appimage" >&2; exit 2 ;;
+esac

@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Tests the release packages in clean containers (podman or docker): the rpm installed with dnf
+# on Fedora, started, and removed leaving nothing; the AppImage started on Fedora and on Ubuntu
+# with only what a desktop has. Each start runs on a private Xvfb inside the container, so
+# nothing shows on the desktop, and passes when the window is up after a few seconds.
+# Usage: scripts/test-packages [RPM] [APPIMAGE] (default: the ones scripts/package wrote).
+# One line per check; full logs in target/logs/packages-*.log.
+set -u
+cd "$(dirname "$0")/.."
+
+fedora=fedora:44
+ubuntu=ubuntu:24.04
+
+if [ "${1:-}" = --inside ]; then
+    # In the container: /src is the checkout, /pkg the package. One PASS or FAIL line per check.
+    kind=$2 package=/pkg/$3
+    status=0
+    check() { # name timeout command...
+        local name=$1 limit=$2; shift 2
+        echo "== $name" >>/logs/detail.log
+        if timeout "$limit" bash -c '"$@"' _ "$@" >>/logs/detail.log 2>&1; then
+            echo "PASS $name"
+        else
+            echo "FAIL $name"
+            status=1
+        fi
+    }
+    # Starts the app on a private X server and checks its window is up after six seconds.
+    starts() { # command...
+        Xvfb :99 -screen 0 1280x900x24 -nolisten tcp & local xvfb=$!
+        sleep 2
+        DISPLAY=:99 XDG_RUNTIME_DIR=$(mktemp -d) "$@" & local app=$!
+        sleep 6
+        local up=0
+        kill -0 $app && DISPLAY=:99 xwininfo -root -tree | grep -q '"SebWatch [0-9.]*": ("" "sebwatch")' && up=1
+        DISPLAY=:99 xwininfo -root -tree
+        kill $app $xvfb
+        wait
+        [ $up = 1 ]
+    }
+    # A desktop's own libraries and fonts plus the test's tools, none of them SebWatch's.
+    desktop() {
+        if command -v dnf >/dev/null; then
+            dnf -y install --setopt=install_weak_deps=False xorg-x11-server-Xvfb xwininfo \
+                mesa-dri-drivers mesa-libEGL libglvnd-glx dejavu-sans-fonts fontconfig \
+                libxkbcommon-x11 libwayland-client libwayland-cursor libwayland-egl \
+                libXcursor libXi libXrandr desktop-file-utils
+        else
+            apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                --no-install-recommends xvfb x11-utils libgl1-mesa-dri libegl1 libgl1 \
+                fonts-dejavu-core fontconfig libxkbcommon-x11-0 libwayland-client0 \
+                libwayland-cursor0 libwayland-egl1 libx11-xcb1 libxcursor1 libxi6 libxrandr2
+        fi
+    }
+    export -f starts desktop
+    case $kind in
+    rpm)
+        # The rpm goes in first, so its own Requires bring its libraries.
+        check rpm-install 600 dnf -y install "$package"
+        check rpm-files 10 bash -c 'rpm -ql sebwatch >/tmp/files &&
+            grep -qx /usr/bin/sebwatch /tmp/files &&
+            grep -qx /usr/share/applications/sebwatch.desktop /tmp/files &&
+            [ "$(grep -c "^/usr/share/icons/hicolor/.*/apps/sebwatch.png$" /tmp/files)" = 9 ] &&
+            while read -r f; do [ -e "$f" ] || { echo "missing $f"; exit 1; }; done </tmp/files'
+        check rpm-desktop-tools 600 desktop
+        check desktop-file-validate 10 desktop-file-validate /usr/share/applications/sebwatch.desktop
+        check rpm-starts 30 starts sebwatch
+        check rpm-remove 300 dnf -y remove sebwatch
+        check rpm-nothing-left 10 bash -c '! rpm -q sebwatch &&
+            while read -r f; do [ ! -e "$f" ] || { echo "left $f"; exit 1; }; done </tmp/files &&
+            [ ! -e /usr/share/licenses/sebwatch ]'
+        ;;
+    appimage)
+        check desktop-tools 600 desktop
+        # Containers have no FUSE: the AppImage unpacks itself to a temporary folder instead.
+        check starts 30 starts "$package" --appimage-extract-and-run
+        ;;
+    esac
+    exit $status
+fi
+
+rpm=${1:-$(ls target/packages/sebwatch-*.x86_64.rpm 2>/dev/null | tail -n1)}
+appimage=${2:-$(ls target/packages/SebWatch-*-x86_64.AppImage 2>/dev/null | tail -n1)}
+runtime=$(command -v podman || command -v docker) || { echo "MISSING: podman or docker"; exit 1; }
+[ -f "$rpm" ] || { echo "MISSING: rpm (run scripts/package rpm or pass its path)"; exit 1; }
+[ -f "$appimage" ] || { echo "MISSING: AppImage (run scripts/package appimage or pass its path)"; exit 1; }
+logs=$PWD/target/logs
+mkdir -p "$logs"
+
+status=0
+run() { # name image package
+    local name=$1 image=$2 package=$3 log=$logs/packages-$1.log kind=rpm
+    [[ $package == *.AppImage ]] && kind=appimage
+    : >"$log"
+    timeout 1500 "$runtime" run --rm --security-opt label=disable -v "$PWD:/src:ro" -v "$(dirname "$(realpath "$package")"):/pkg:ro" \
+        -v "$logs:/logs-host" "$image" bash -c 'mkdir /logs && touch /logs/detail.log &&
+            /src/scripts/test-packages --inside "$@"; s=$?; cp /logs/detail.log /logs-host/packages-'"$name"'.log; exit $s' \
+        _ "$kind" "$(basename "$package")" | sed "s/^\(PASS\|FAIL\) /\1 $name /"
+    local s=${PIPESTATUS[0]}
+    [ "$s" = 0 ] || { status=1; [ "$s" = 124 ] && echo "FAIL $name timed out"; echo "   (see $log)"; }
+}
+run fedora-rpm "$fedora" "$rpm"
+run fedora-appimage "$fedora" "$appimage"
+run ubuntu-appimage "$ubuntu" "$appimage"
+exit $status
