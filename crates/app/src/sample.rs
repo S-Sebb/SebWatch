@@ -315,6 +315,11 @@ pub fn snapshot() -> Snapshot {
         gpu_asleep: false,
         nvidia_unavailable: false,
         disk_per_s: Some(b(9.0, M)),
+        pressure: Some(0.0),
+        zswap: Some(sebwatch_core::memory::Zswap {
+            stored: b(6.1, G),
+            pool: b(1.9, G),
+        }),
         unsplit: None,
     }
 }

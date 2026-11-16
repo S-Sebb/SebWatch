@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use sebwatch_core::memory::{CLOSED_APPS, read};
+use sebwatch_core::memory::{CLOSED_APPS, Zswap, pressure, read, zswap};
 
 #[test]
 fn fixture_sums_exactly_to_mem_total() {
@@ -64,7 +64,14 @@ fn fixture_sums_exactly_to_mem_total() {
         apps_sum + m.free + m.zswap_pool + m.kernel_and_drivers,
         m.total
     );
-    assert_eq!(m.pressure_avg10, 1.92);
+    let proc = fixtures.join("proc");
+    assert_eq!(pressure(&proc), Some(1.92));
+    // zswap holds pages here though no sysfs says it is on.
+    let (stored, pool) = (10 * 1024, 2 * 1024);
+    assert_eq!(zswap(&proc, &fixtures), Some(Zswap { stored, pool }));
+    // A kernel without pressure tracking or zswap.
+    assert_eq!(pressure(&fixtures), None);
+    assert_eq!(zswap(&fixtures, &fixtures), None);
 }
 
 #[test]

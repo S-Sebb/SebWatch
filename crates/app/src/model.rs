@@ -9,7 +9,8 @@ use slint::{ModelRc, SharedString, VecModel};
 
 use crate::history::{History, Measure};
 use crate::icons::Icons;
-use crate::{Bar, Row, RowKind, Segment, SegmentKind, TableKey, Tile};
+use crate::{Bar, Row, RowKind, Segment, SegmentKind, SwapInfo, TableKey, Tile};
+use sebwatch_core::memory::Zswap;
 
 /// Apps each bar names; the rest are its "Other apps".
 const NAMED: usize = 5;
@@ -20,6 +21,8 @@ const SERIES: usize = 7;
 const LABELLED: f32 = 0.075;
 /// Apps listed before the "N more apps" fold.
 const LISTED: usize = 11;
+/// Apps the swap popup lists under "Most in swap".
+const MOST_IN_SWAP: usize = 3;
 
 pub struct Snapshot {
     /// When it was read, for the tiles' graphs.
@@ -49,6 +52,11 @@ pub struct Snapshot {
     pub nvidia_unavailable: bool,
     /// None when no group has `io.stat` (the io controller is off).
     pub disk_per_s: Option<u64>,
+    /// Share of the last 10 s some task waited for memory, 0–100; None where the kernel doesn't
+    /// track it.
+    pub pressure: Option<f64>,
+    /// None while zswap is off.
+    pub zswap: Option<Zswap>,
     /// Some on a system that can't split memory by app (no cgroup v2 memory accounting or no
     /// systemd user session): `apps` is empty and `kernel` holds all memory in use.
     pub unsplit: Option<Unsplit>,
@@ -304,6 +312,7 @@ struct Focus {
 pub struct Shown {
     pub memory: Bar,
     pub swap: Bar,
+    pub swap_info: SwapInfo,
     /// `None` without an NVIDIA GPU.
     pub vram: Option<Bar>,
     /// The Intel or AMD GPU's column heading, empty without one.
@@ -525,6 +534,7 @@ impl View {
         let series: Series = named.into_iter().zip(slots).collect();
         Shown {
             memory: memory_bar(s, &series, &ram),
+            swap_info: swap_info(s, &series, &swap),
             swap: swap_bar(s, &series, &coloured(swap, &series)),
             vram: vram_bar(s, &series, &coloured(vram, &series)),
             igpu: s.igpu.as_ref().map_or(String::new(), |g| g.vendor.clone()),
@@ -1056,19 +1066,10 @@ fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
             app_segment(app, c, app.swap, total, "in swap", Vec::new())
         })
         .collect();
-    let used = match &s.unsplit {
-        Some(unsplit) => {
-            segments.push(segment(
-                SegmentKind::Other,
-                "Used swap",
-                unsplit.swap_used,
-                total,
-                &[],
-            ));
-            unsplit.swap_used
-        }
-        None => s.apps.iter().map(|a| a.swap).sum::<u64>() + s.closed.swap,
-    };
+    let used = swap_used(s);
+    if s.unsplit.is_some() {
+        segments.push(segment(SegmentKind::Other, "Used swap", used, total, &[]));
+    }
     segments.extend(others(&s.apps, named, |a| a.swap, total));
     segments.extend(closed_segment(
         &s.closed,
@@ -1091,6 +1092,113 @@ fn swap_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Bar {
         segments,
         "",
     )
+}
+
+fn swap_used(s: &Snapshot) -> u64 {
+    match &s.unsplit {
+        Some(unsplit) => unsplit.swap_used,
+        None => s.apps.iter().map(|a| a.swap).sum::<u64>() + s.closed.swap,
+    }
+}
+
+/// How long apps waited for memory, by `some avg10`.
+#[derive(Debug, PartialEq)]
+enum Pressure {
+    None,
+    Some,
+    High,
+}
+
+fn pressure(avg10: f64) -> Pressure {
+    if avg10 >= 10.0 {
+        Pressure::High
+    } else if avg10 >= 1.0 {
+        Pressure::Some
+    } else {
+        Pressure::None
+    }
+}
+
+/// An app as the swap popup names it: with the detail that tells instances apart
+/// ("· guide35"), not a count ("17 agents").
+fn swap_label(app: &App) -> String {
+    match app.detail.starts_with('·') {
+        true => format!("{} {}", short(&app.name), app.detail),
+        false => short(&app.name),
+    }
+}
+
+/// The Swap title's popup, "Memory pressure and swap"; `most` is the swap bar's apps, most swap
+/// first. Wording approved in the mockup of #11.
+fn swap_info(s: &Snapshot, series: &Series, most: &[&App]) -> SwapInfo {
+    let used = swap_used(s);
+    let (level, waited) = match s.pressure {
+        None => ("", String::new()),
+        Some(p) => match pressure(p) {
+            Pressure::High => (
+                "High:",
+                format!(
+                    "apps spent {p:.0}% of the last 10 s waiting for memory, so they feel slow."
+                ),
+            ),
+            Pressure::Some => (
+                "Some:",
+                format!("apps spent {p:.0}% of the last 10 s waiting for memory."),
+            ),
+            Pressure::None => ("None:", "no app waited for memory in the last 10 s.".into()),
+        },
+    };
+    let zswap = match &s.zswap {
+        _ if used == 0 => String::new(),
+        Some(z) => format!(
+            "Holds {} of it compressed in {} of RAM, saving {}. The other {} is in the swapfile on disk, slower to bring back.",
+            bytes(z.stored),
+            bytes(z.pool),
+            bytes(z.stored.saturating_sub(z.pool)),
+            bytes(used.saturating_sub(z.stored)),
+        ),
+        None => "All of it is in the swapfile on disk, slow to bring back.".into(),
+    };
+    let top: Vec<Segment> = most
+        .iter()
+        .take(MOST_IN_SWAP)
+        .map(|app| {
+            let (kind, colour) = match series.get(app.key.as_str()) {
+                Some(&c) => (SegmentKind::App, c as i32),
+                None => (SegmentKind::Other, 0),
+            };
+            Segment {
+                kind,
+                series: colour,
+                name: swap_label(app).into(),
+                size: bytes(app.swap).into(),
+                ..Default::default()
+            }
+        })
+        .collect();
+    // RAM in use and swap, not file cache: the kernel frees that anyway when it needs to.
+    let closing = most.first().map_or(String::new(), |app| {
+        format!(
+            "Closing {} would free {} of RAM and {} of swap.",
+            swap_label(app),
+            bytes(app.ram),
+            bytes(app.swap)
+        )
+    });
+    SwapInfo {
+        high: s.pressure.is_some_and(|p| pressure(p) == Pressure::High),
+        level: level.into(),
+        pressure: waited.into(),
+        swap: format!(
+            "{} of {} used. When RAM runs short, Linux moves memory that apps haven't used lately out of RAM.",
+            bytes(used),
+            bytes(s.swap_total)
+        )
+        .into(),
+        zswap: zswap.into(),
+        top: ModelRc::from(Rc::new(VecModel::from(top))),
+        closing: closing.into(),
+    }
 }
 
 /// VRAM by app from NVML's per-process figures, the rest of the used VRAM as "Driver and other".
@@ -1558,6 +1666,64 @@ mod tests {
         assert!(swap.click(Column::Swap).ascending);
         assert!(!swap.click(Column::Swap).click(Column::Swap).ascending);
         assert!(!swap.click(Column::Swap).click(Column::Cpu).ascending);
+    }
+
+    #[test]
+    fn pressure_is_high_from_10_percent_and_some_from_1() {
+        assert_eq!(pressure(0.0), Pressure::None);
+        assert_eq!(pressure(0.99), Pressure::None);
+        assert_eq!(pressure(1.0), Pressure::Some);
+        assert_eq!(pressure(9.99), Pressure::Some);
+        assert_eq!(pressure(10.0), Pressure::High);
+        let mut s = crate::sample::snapshot();
+        s.pressure = Some(18.0);
+        let info = View::default().update(s).swap_info;
+        assert!(info.high);
+        assert_eq!(info.level, "High:");
+        assert_eq!(
+            info.pressure,
+            "apps spent 18% of the last 10 s waiting for memory, so they feel slow."
+        );
+    }
+
+    #[test]
+    fn swap_popup_names_the_app_with_most_swap_and_what_closing_it_frees() {
+        // Claude agents has the most RAM, the emulator the most swap.
+        let info = View::default().update(crate::sample::snapshot()).swap_info;
+        assert!(!info.high);
+        let top: Vec<_> = slint::Model::iter(&info.top)
+            .map(|s| format!("{} {}", s.name, s.size))
+            .collect();
+        assert_eq!(
+            top,
+            [
+                "Android emulator · guide35 2.9 GB",
+                "Claude agents 1.8 GB",
+                "Steam 1.6 GB"
+            ]
+        );
+        // Its RAM in use (zswap share included) and swap; its 26 MB of file cache left out.
+        assert_eq!(
+            info.closing,
+            "Closing Android emulator · guide35 would free 2.7 GB of RAM and 2.9 GB of swap."
+        );
+        assert_eq!(
+            info.zswap,
+            "Holds 6.1 GB of it compressed in 1.9 GB of RAM, saving 4.2 GB. The other 9.5 GB is in the swapfile on disk, slower to bring back."
+        );
+        // Nothing in swap: no app to close.
+        let mut s = crate::sample::snapshot();
+        s.apps.iter_mut().for_each(|a| a.swap = 0);
+        s.closed.swap = 0;
+        let info = View::default().update(s).swap_info;
+        assert_eq!(
+            (
+                slint::Model::row_count(&info.top),
+                info.closing.as_str(),
+                info.zswap.as_str()
+            ),
+            (0, "", "")
+        );
     }
 
     #[test]

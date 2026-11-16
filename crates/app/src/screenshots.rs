@@ -1,6 +1,7 @@
 //! The window drawn offscreen by Slint's software renderer, in each theme, with the Android
 //! emulator's bar segment hovered and its row expanded, then with the NVIDIA GPU asleep, then
-//! sorted by swap both ways, then searched for "k" from the keyboard, plus Breeze Light with the menu open, and one of this PC's live
+//! sorted by swap both ways, then searched for "k" from the keyboard, then with memory pressure
+//! high and the swap popup open, plus Breeze Light with the menu open, and one of this PC's live
 //! reading. Also `bench_refresh`, the window side of `scripts/bench processes`.
 //! Nothing shows on the screen. Run with `scripts/screenshots <dir>`.
 
@@ -376,9 +377,10 @@ fn screenshots() {
         ui.hide().unwrap();
     }
 
-    // The keyboard focus, reached by Tab (menu button, tiles, search field, header, table): the
-    // tiles and the header with their tooltips open at once, the Android emulator's row, its
-    // leftover row with the tooltip, the search field, then the menu.
+    // The keyboard focus, reached by Tab (menu button, swap popup's button, tiles, search field,
+    // header, table): the swap popup, the tiles and the header with their tooltips open at once,
+    // the Android emulator's row, its leftover row with the tooltip, the search field, then the
+    // menu.
     for (choice, name, height) in [
         (ThemeChoice::Light, "light", 844),
         (ThemeChoice::Dark, "dark", 844),
@@ -401,8 +403,24 @@ fn screenshots() {
             height,
         };
         window.set_size(PhysicalSize::new(shot.width, shot.height));
+        // #11: memory pressure high, the popup opened from the chip, the third Tab stop (after
+        // the menu button and the ⓘ button), with Space; Escape closes it.
+        let mut tight = crate::sample::snapshot();
+        tight.pressure = Some(18.0);
+        crate::present(&ui, tight);
+        for _ in 0..3 {
+            shot.tap(Key::Tab);
+        }
+        shot.tap(" ");
+        shot.save(&shot.render(), &dir.join(format!("pressure-{name}.png")));
+        shot.tap(Key::Escape);
+        crate::present(&ui, crate::sample::snapshot());
         ui.invoke_pick(1);
-        shot.tap(Key::Tab);
+        // Escape gave the focus back to the ⓘ button; Enter opens it.
+        shot.tap(Key::Return);
+        shot.save(&shot.render(), &dir.join(format!("focus-popup-{name}.png")));
+        shot.tap(Key::Escape);
+        // On to the tiles.
         shot.tap(Key::Tab);
         shot.save(&shot.render(), &dir.join(format!("focus-tile-{name}.png")));
         // The last tile, Disk.
@@ -445,6 +463,8 @@ fn screenshots() {
         if choice == ThemeChoice::Light {
             shot.save(&shot.render(), &dir.join("focus-search-light.png"));
         }
+        // Back past the ⓘ button to the menu button.
+        shot.tap(Key::Backtab);
         shot.tap(Key::Backtab);
         shot.tap(Key::Backtab);
         shot.tap(Key::Return);

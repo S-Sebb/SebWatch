@@ -40,8 +40,6 @@ pub struct MemorySnapshot {
     pub kernel_and_drivers: u64,
     /// `MemAvailable`, for the summary sentence.
     pub available: u64,
-    /// Share of the last 10 s some task waited for memory, 0–100 (`some avg10`).
-    pub pressure_avg10: f64,
 }
 
 /// One app: every populated memory leaf cgroup that shares a cleaned name, plus the charges left
@@ -211,14 +209,6 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
     let zswap_pool = zswap.saturating_sub(app_zswap);
     let kernel_and_drivers = total.saturating_sub(free + charged + zswap_pool);
 
-    let pressure = fs::read_to_string(proc_root.join("pressure/memory")).unwrap_or_default();
-    let pressure_avg10 = pressure
-        .lines()
-        .find(|l| l.starts_with("some "))
-        .and_then(|l| l.split(' ').find_map(|f| f.strip_prefix("avg10=")))
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.0);
-
     Ok(MemorySnapshot {
         total,
         apps,
@@ -226,7 +216,6 @@ pub fn read(cgroup_root: &Path, proc_root: &Path) -> io::Result<MemorySnapshot> 
         zswap_pool,
         kernel_and_drivers,
         available,
-        pressure_avg10,
     })
 }
 
@@ -290,6 +279,42 @@ pub fn totals(proc_root: &Path) -> io::Result<Totals> {
         file_cache: kb("Active(file)")? + kb("Inactive(file)")?,
         zswap_pool: kb("Zswap").unwrap_or(0),
     })
+}
+
+/// Share of the last 10 s some task waited for memory, 0–100: `some avg10` of
+/// `/proc/pressure/memory`. None where the kernel doesn't track pressure.
+pub fn pressure(proc_root: &Path) -> Option<f64> {
+    fs::read_to_string(proc_root.join("pressure/memory"))
+        .ok()?
+        .lines()
+        .find(|l| l.starts_with("some "))?
+        .split(' ')
+        .find_map(|f| f.strip_prefix("avg10="))?
+        .parse()
+        .ok()
+}
+
+/// What zswap holds: swapped-out pages kept compressed in RAM instead of on disk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Zswap {
+    /// `Zswapped`: the pages' own size.
+    pub stored: u64,
+    /// `Zswap`: the RAM they take compressed.
+    pub pool: u64,
+}
+
+/// None while zswap is off (`/sys/module/zswap/parameters/enabled` under `sys_root`) and
+/// holds nothing.
+pub fn zswap(proc_root: &Path, sys_root: &Path) -> Option<Zswap> {
+    let meminfo = read_meminfo(proc_root).ok()?;
+    let kb = |key: &str| meminfo_bytes(&meminfo, key).ok();
+    let zswap = Zswap {
+        stored: kb("Zswapped")?,
+        pool: kb("Zswap")?,
+    };
+    let enabled = fs::read_to_string(sys_root.join("module/zswap/parameters/enabled"))
+        .is_ok_and(|v| v.trim() == "Y");
+    (enabled || zswap.stored > 0).then_some(zswap)
 }
 
 /// One group's `memory.stat` and `memory.swap.current`, the fields the accounting uses.

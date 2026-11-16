@@ -143,8 +143,12 @@ check("headers say what they measure",
 
 # A click through AT-SPI focuses the row; the screen reader's focus is on it, not on the list.
 second = rows[1]
-action = second["node"].queryAction()
-action.doAction(0)
+# A refresh can replace the row between the walk and the click: a FAIL, not the end of the run.
+try:
+    second["node"].queryAction().doAction(0)
+except Exception as e:
+    print(f"FAIL row click through AT-SPI: {e!r}")
+    status = 1
 time.sleep(1)
 dump()
 rows = [n for n in nodes if n["role"] == "list item" and "RAM in use" in n["description"]]
@@ -166,6 +170,18 @@ names = [i["name"] for i in items]
 checked = [i["name"] for i in items if "checked" in i["states"]]
 check("menu items", names == ["System", "Light", "Dark", "SebChat"] and len(checked) == 1,
       f"items {names}, checked {checked}")
+
+# #11: the ⓘ button after the Swap title opens "Memory pressure and swap"; each line reads as its
+# key and text.
+info = [n for n in nodes if n["role"] == "button" and n["name"] == "Memory pressure and swap"]
+check("swap popup button", len(info) == 1, f"{len(info)} buttons named Memory pressure and swap")
+if info:
+    info[0]["node"].queryAction().doAction(0)
+    time.sleep(1)
+    dump()
+    lines = {n["name"]: n["description"] for n in nodes
+             if n["name"] in ("Pressure", "Swap", "zswap", "Closing it") and n["description"]}
+    check("swap popup lines", "used." in lines.get("Swap", "") and "Pressure" in lines, f"lines {lines}")
 out.close()
 sys.exit(status)
 EOF

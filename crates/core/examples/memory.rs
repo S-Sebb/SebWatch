@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use sebwatch_core::memory::read;
 use sebwatch_core::memory::{CGROUP_ROOT, PROC_ROOT};
+use sebwatch_core::memory::{pressure, read};
 
 fn main() -> std::io::Result<()> {
     let m = read(Path::new(CGROUP_ROOT), Path::new(PROC_ROOT))?;
@@ -38,9 +38,9 @@ fn main() -> std::io::Result<()> {
         if sum == m.total { "match" } else { "MISMATCH" }
     );
     println!(
-        "available {:.1} MiB, pressure some avg10 {}%",
+        "available {:.1} MiB, pressure some avg10 {:?}%",
         mib(m.available),
-        m.pressure_avg10
+        pressure(Path::new(PROC_ROOT))
     );
     Ok(())
 }

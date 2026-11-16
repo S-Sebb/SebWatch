@@ -33,6 +33,20 @@ export struct Bar {
     segments: [Segment],
 }
 
+// The Swap title's popup, "Memory pressure and swap". Empty lines are left out.
+export struct SwapInfo {
+    // Pressure is high: the warning chip shows.
+    high: bool,
+    // "High:", "Some:" or "None:"; empty where the kernel doesn't track pressure.
+    level: string,
+    pressure: string,
+    swap: string,
+    zswap: string,
+    // The apps with the most swap, as the swap bar's segments (name and size).
+    top: [Segment],
+    closing: string,
+}
+
 export struct Tile {
     name: string,
     value: string,
@@ -296,19 +310,278 @@ component SegmentBar {
     }
 }
 
+// One line of the swap popup: a muted key, then its text; read as one text by screen readers.
+component InfoLine {
+    in property <string> key;
+    in property <string> text;
+    accessible-role: AccessibleRole.text;
+    accessible-label: self.key;
+    accessible-description: self.text;
+    HorizontalLayout {
+        spacing: 10px;
+        Muted {
+            width: 96px;
+            text: root.key;
+            font-size: Theme.small;
+            vertical-alignment: top;
+        }
+        @children
+    }
+}
+
+// Opens the popup on a click, Enter or Space, with a focus frame only after a key.
+component InfoTrigger {
+    callback open(bool);
+    in property <bool> keyboard;
+    out property <bool> has-hover: touch.has-hover;
+    accessible-role: button;
+    accessible-action-default => {
+        root.open(false);
+    }
+    @children
+    if scope.has-focus && root.keyboard: FocusRing {
+        width: 100%;
+        height: 100%;
+    }
+    touch := TouchArea {
+        clicked => {
+            root.open(false);
+        }
+    }
+    scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {
+                root.open(true);
+                return accept;
+            }
+            reject
+        }
+    }
+    public function take-focus() {
+        scope.focus();
+    }
+}
+
+// After the Swap title: the ⓘ button, then "Memory pressure high" while it is; either opens the
+// popup "Memory pressure and swap", below the title. It stays open until Escape, a click
+// outside or a second click on them (Slint closes it on that press and doesn't pass it on).
+component SwapExplain {
+    in property <SwapInfo> info;
+    property <bool> keyboard;
+    horizontal-stretch: 0;
+
+    function open(keyboard: bool) {
+        root.keyboard = keyboard;
+        popup.show();
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            button := InfoTrigger {
+                width: 18px;
+                height: 18px;
+                keyboard: root.keyboard;
+                accessible-label: "Memory pressure and swap";
+                open(keyboard) => {
+                    root.open(keyboard);
+                }
+                Rectangle {
+                    border-radius: Theme.picnic ? 0 : 9px;
+                    border-width: Theme.picnic ? 2px : 1px;
+                    border-color: Theme.picnic ? Theme.outline : button.has-hover ? Theme.accent : Theme.muted;
+                    background: button.has-hover ? Theme.hover : transparent;
+                    Text {
+                        text: "i";
+                        font-size: 11px;
+                        font-weight: 700;
+                        color: Theme.picnic ? Theme.fg : button.has-hover ? Theme.accent : Theme.muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        if root.info.high: VerticalLayout {
+            alignment: center;
+            InfoTrigger {
+                keyboard: root.keyboard;
+                accessible-label: "Memory pressure high";
+                open(keyboard) => {
+                    root.open(keyboard);
+                }
+                Rectangle {
+                    background: Theme.warning-bg;
+                    border-width: 1px;
+                    border-color: Theme.warning;
+                    border-radius: Theme.picnic ? 0 : 3px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        padding-top: 3px;
+                        padding-bottom: 3px;
+                        spacing: 4px;
+                        VerticalLayout {
+                            alignment: center;
+                            // The warning triangle of the "Not updating" message.
+                            Rectangle {
+                                width: 14px;
+                                height: 14px;
+                                Path {
+                                    width: 14px;
+                                    height: 14px;
+                                    viewbox-width: 32;
+                                    viewbox-height: 32;
+                                    commands: "M 16 3 L 30 28 L 2 28 Z";
+                                    fill: Theme.warning;
+                                }
+                                Text {
+                                    y: 4px;
+                                    height: 9px;
+                                    text: "!";
+                                    color: #ffffff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        Label {
+                            text: "Memory pressure high";
+                            font-size: Theme.small;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    popup := PopupWindow {
+        x: -root.x;
+        y: root.height + 8px;
+        width: 500px;
+        close-policy: close-on-click-outside;
+        TipCard {
+            accessible-role: groupbox;
+            accessible-label: "Memory pressure and swap";
+            FocusScope {
+                init => {
+                    self.focus();
+                }
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        popup.close();
+                        if root.keyboard {
+                            button.take-focus();
+                        }
+                        return accept;
+                    }
+                    reject
+                }
+                VerticalLayout {
+                    padding-left: 3px;
+                    padding-right: 3px;
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    spacing: 6px;
+                    SectionTitle {
+                        text: "Memory pressure and swap";
+                        font-size: Theme.picnic ? 20px : Theme.font-size;
+                        accessible-role: none;
+                    }
+                    Rectangle {
+                        height: 2px;
+                    }
+                    if root.info.level != "": InfoLine {
+                        key: "Pressure";
+                        text: root.info.level + " " + root.info.pressure;
+                        StyledText {
+                            text: @markdown("**\{root.info.level}** \{root.info.pressure}");
+                            default-color: Theme.fg;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    InfoLine {
+                        key: "Swap";
+                        text: root.info.swap;
+                        Label {
+                            text: root.info.swap;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    if root.info.zswap != "": InfoLine {
+                        key: "zswap";
+                        text: root.info.zswap;
+                        Label {
+                            text: root.info.zswap;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    if root.info.top.length > 0: InfoLine {
+                        key: "Most in swap";
+                        text: "";
+                        VerticalLayout {
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            for s in root.info.top: HorizontalLayout {
+                                spacing: 5px;
+                                accessible-role: list-item;
+                                accessible-label: s.name;
+                                accessible-description: s.size;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Swatch {
+                                        kind: s.kind;
+                                        series: s.series;
+                                    }
+                                }
+                                Label {
+                                    text: s.name + " " + s.size;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+                    }
+                    if root.info.closing != "": InfoLine {
+                        key: "Closing it";
+                        text: root.info.closing;
+                        Label {
+                            text: root.info.closing;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component BarView {
     in property <Bar> bar;
     // The bar's width, given from outside: from its own width the legend's text would loop.
     in property <length> bar-width;
+    // The swap bar: the ⓘ button and the pressure chip after the title.
+    in property <bool> explained;
+    in property <SwapInfo> info;
     property <length> share: self.bar-width - (self.bar.segments.length - 1) * 2px;
     vertical-stretch: 0;
     VerticalLayout {
         spacing: 5px;
         HorizontalLayout {
+            spacing: 8px;
             title := SectionTitle {
                 text: root.bar.title;
             }
+            if root.explained: SwapExplain {
+                info: root.info;
+            }
             Muted {
+                horizontal-stretch: 1;
                 text: root.bar.total;
                 horizontal-alignment: right;
                 vertical-alignment: bottom;
@@ -1416,6 +1689,7 @@ component Table {
 export component MainWindow inherits Window {
     in property <Bar> memory;
     in property <Bar> swap;
+    in property <SwapInfo> swap-info;
     // No NVIDIA GPU: no VRAM bar.
     in property <bool> has-vram;
     in property <Bar> vram;
@@ -1582,6 +1856,8 @@ export component MainWindow inherits Window {
                             BarView {
                                 bar: root.swap;
                                 bar-width: root.bar-width;
+                                explained: true;
+                                info: root.swap-info;
                             }
                             if root.has-vram: Rectangle {
                                 min-height: Theme.picnic ? 18px : 14px;
