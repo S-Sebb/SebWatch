@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the release binary and installs it with its launcher entry and icons into PREFIX (default ~/.local).
-# Usage: scripts/install [PREFIX]. scripts/uninstall [PREFIX] removes the same files.
+# Installed into ~/.local on KDE Plasma, it takes Win+Esc over from System Monitor.
+# Usage: scripts/install [PREFIX]. scripts/uninstall [PREFIX] removes the same files and gives Win+Esc back.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 prefix=${1:-$HOME/.local}
@@ -13,4 +14,8 @@ for icon in art/icons/hicolor/*/apps/sebwatch.png; do
 done
 
 scripts/refresh-caches "$prefix"
+# Only an install the desktop finds gets the shortcut: test installs go into other folders.
+if [ "$prefix" = "$HOME/.local" ]; then
+    "$prefix/bin/sebwatch" --bind-win-esc && echo "Win+Esc now opens SebWatch" || echo "Win+Esc unchanged (KDE Plasma only)"
+fi
 echo "Installed SebWatch into $prefix"

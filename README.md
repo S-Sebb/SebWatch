@@ -78,6 +78,21 @@ scripts/uninstall    # removes exactly what install put there
 Both take another prefix as an argument (`scripts/install /usr/local`). SebWatch then appears in
 the app menu under System. The chosen theme is kept in `~/.config/sebwatch/settings`.
 
+### Win+Esc on KDE Plasma
+
+On KDE Plasma, Win+Esc opens SebWatch instead of System Monitor, which stays in the app menu.
+Pressing it again while SebWatch is open brings its window to the front. `scripts/install` and
+`sudo dnf install` set this up and removing SebWatch gives Win+Esc back to System Monitor. For
+the AppImage, or to change it by hand:
+
+```sh
+sebwatch --bind-win-esc      # the AppImage: ./SebWatch-0.1.0-x86_64.AppImage --bind-win-esc
+sebwatch --unbind-win-esc    # before removing it, to give Win+Esc back to System Monitor
+```
+
+From the AppImage, `--bind-win-esc` also adds SebWatch to the app menu, pointing at the
+AppImage where it is; `--unbind-win-esc` removes that entry again.
+
 ## What you see
 
 From the top:
