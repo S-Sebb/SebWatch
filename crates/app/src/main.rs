@@ -35,6 +35,7 @@ thread_local! {
 fn show(window: &MainWindow, shown: model::Shown) {
     window.set_memory(shown.memory);
     window.set_swap(shown.swap);
+    window.set_swap_info(shown.swap_info);
     window.set_has_vram(shown.vram.is_some());
     window.set_vram(shown.vram.unwrap_or_default());
     window.global::<Columns>().set_igpu(shown.igpu.into());

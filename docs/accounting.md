@@ -91,7 +91,7 @@ Apps plus Free, Zswap pool and Kernel, drivers and unattributed sum exactly to `
 | Zswap pool | `Zswap` minus every app's `zswap`: only the part of the compressed pool no app accounts for (each app's share is already in its RAM in use; `Zswapped` is how much the pool holds) |
 | Kernel, drivers and unattributed | `MemTotal - MemFree - Zswap pool - sum(apps' RAM in use + file cache)` (Closed apps (cache) included): memory no cgroup is charged for (boot allocations, root page cache, GPU driver memory), and whatever the per-cgroup counters miss |
 | Available | `MemAvailable` |
-| Pressure | `/proc/pressure/memory`, `some avg10` |
+| Pressure | `/proc/pressure/memory`, `some avg10` (the swap popup's first line) |
 
 ## CPU and disk
 
@@ -190,6 +190,20 @@ the cgroup root, the same key the memory numbers use.
   it has some, is its own segment in the swap bar too.
 - **Swap bar**: the five biggest apps by swap, Other apps, and free swap (`SwapTotal` minus every
   app's swap).
+- **Memory pressure and swap** (popup of the ⓘ button after the Swap title):
+  - Pressure: `some avg10` of `/proc/pressure/memory`, the share of the last 10 s some task
+    waited for memory. High from 10%, Some from 1%, else None; High also shows the "Memory
+    pressure high" chip. Left out when the kernel doesn't track pressure (no file).
+  - Swap: used and total as the swap bar's title (every app's swap plus Closed apps', of
+    `SwapTotal`).
+  - zswap: `Zswapped` (the pages zswap holds) compressed in `Zswap` (its pool in RAM), saving
+    their difference; the rest of the used swap is on disk. zswap counts as on when
+    `/sys/module/zswap/parameters/enabled` is `Y` or it holds pages; off, the line says all of
+    it is on disk. Left out while nothing is in swap.
+  - Most in swap: the three apps with the most `memory.swap.current`, in their bar colours
+    (Closed apps left out: there's nothing to close).
+  - Closing it: the first of those apps, its RAM in use and its swap; not its file cache, which
+    the kernel drops anyway when it needs the RAM.
 - **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the five biggest apps by VRAM (each app's
   processes summed over its groups), Other apps, Driver and other (used VRAM minus every app's:
   the driver, contexts and processes NVML doesn't list) and Free (total minus used). Apps without

@@ -340,6 +340,8 @@ impl Reader {
             gpu_asleep: asleep,
             nvidia_unavailable: unavailable,
             disk_per_s,
+            pressure: memory::pressure(Path::new(PROC_ROOT)),
+            zswap: memory::zswap(Path::new(PROC_ROOT), Path::new("/sys")),
             unsplit: None,
         })
     }
@@ -381,6 +383,8 @@ impl Reader {
             gpu_asleep: asleep,
             nvidia_unavailable: unavailable,
             disk_per_s,
+            pressure: memory::pressure(Path::new(PROC_ROOT)),
+            zswap: memory::zswap(Path::new(PROC_ROOT), Path::new("/sys")),
             unsplit: Some(Unsplit {
                 swap_used: swap_total.saturating_sub(swap_free),
             }),
