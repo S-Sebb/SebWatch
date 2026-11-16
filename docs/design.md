@@ -51,6 +51,10 @@ Top to bottom:
    tile's bottom, under the words (tile style T3, #52).
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.
+Readings that fail say so rather than showing 0: "unavailable" in a tile, "n/a" in a table
+cell, and a KDE-style inline warning above the bars when the figures stop updating, giving the
+cause and the time of the reading shown. A system that can't split memory by app shows a plain
+message in place of the table (#38).
 
 **Keyboard and screen readers.** Tab goes from the menu button to the search field to the
 table. In the table, Up and Down move the focus, Home and End go to the ends, Right and Left (or

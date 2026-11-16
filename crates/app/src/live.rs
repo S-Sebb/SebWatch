@@ -11,7 +11,7 @@ use sebwatch_core::naming::Naming;
 use sebwatch_core::nvidia::{self, Nvidia};
 use sebwatch_core::processes;
 
-use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable};
+use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable, Unsplit};
 
 pub struct Reader {
     naming: Naming,
@@ -20,6 +20,44 @@ pub struct Reader {
     /// The last process sample of each expanded app, for its processes' CPU.
     drills: HashMap<String, (Instant, processes::Sample)>,
     cores: u32,
+    /// Memory can be split by app here (`memory::splits_by_app`).
+    split: bool,
+}
+
+/// The NVIDIA GPU as read this refresh.
+struct GpuReading {
+    gpu: Option<nvidia::Gpu>,
+    asleep: bool,
+    /// Awake, but the driver didn't answer.
+    unavailable: bool,
+}
+
+fn read_gpu(interval: Duration) -> GpuReading {
+    let (gpu, asleep, unavailable) = match nvidia::read(interval) {
+        Some(Nvidia::Awake(gpu)) => (Some(gpu), false, false),
+        Some(Nvidia::Asleep) => (None, true, false),
+        Some(Nvidia::NotAnswering) => (None, false, true),
+        None => (None, false, false),
+    };
+    GpuReading {
+        gpu,
+        asleep,
+        unavailable,
+    }
+}
+
+/// A group's disk use in bytes/s, None without `io.stat`.
+fn disk(r: &Rates) -> Option<u64> {
+    r.io.map(|(read, write)| (read + write) as u64)
+}
+
+/// The sum of the known figures, None when none is.
+fn sum_known(figures: impl Iterator<Item = Option<u64>>) -> Option<u64> {
+    figures.fold(None, |sum, f| match (sum, f) {
+        (None, f) => f,
+        (s, None) => s,
+        (Some(s), Some(f)) => Some(s + f),
+    })
 }
 
 impl Reader {
@@ -29,30 +67,48 @@ impl Reader {
             last: None,
             drills: HashMap::new(),
             cores: std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
+            split: memory::splits_by_app(Path::new(CGROUP_ROOT)),
         }
     }
 
-    /// The first reading shows no CPU or disk use: rates need two samples.
-    /// `expanded` holds the keys of the apps whose processes are shown.
-    pub fn read(&mut self, interval: Duration, expanded: &HashSet<String>) -> io::Result<Snapshot> {
+    /// CPU and disk rates of `groups` since the last call, and the whole CPU and disk use: None
+    /// when no group's CPU, or no group's disk, could be read. The first call shows no use: rates
+    /// need two samples.
+    fn rates<'a>(
+        &mut self,
+        groups: impl IntoIterator<Item = &'a PathBuf>,
+    ) -> (Instant, BTreeMap<PathBuf, Rates>, Option<f32>, Option<u64>) {
         let root = Path::new(CGROUP_ROOT);
-        let mem = memory::read(root, Path::new(PROC_ROOT))?;
         let now = Instant::now();
-        let sample = cpu_io::read_sample(root, mem.apps.iter().flat_map(|a| &a.cgroups));
+        let sample = cpu_io::read_sample(root, groups);
         let rates = match &self.last {
             Some((then, before)) => cpu_io::rates(before, &sample, now - *then),
             None => BTreeMap::new(),
         };
+        let cpu = (!sample.is_empty()).then(|| rates.values().map(|r| r.cpu_cores).sum::<f64>());
+        let io = sample.values().any(|c| c.io.is_some());
+        let disk = io.then(|| rates.values().filter_map(disk).sum());
         self.last = Some((now, sample));
+        (now, rates, cpu.map(|c| c as f32), disk)
+    }
+
+    /// `expanded` holds the keys of the apps whose processes are shown.
+    pub fn read(&mut self, interval: Duration, expanded: &HashSet<String>) -> io::Result<Snapshot> {
+        if !self.split {
+            return self.read_unsplit(interval);
+        }
+        let root = Path::new(CGROUP_ROOT);
+        let mem = memory::read(root, Path::new(PROC_ROOT))?;
+        let (now, rates, cpu_used, disk_per_s) =
+            self.rates(mem.apps.iter().flat_map(|a| &a.cgroups));
         // A sleeping NVIDIA GPU is idle: 0%, and no VRAM figure without waking it.
-        let (gpu, asleep) = match nvidia::read(interval) {
-            Some(Nvidia::Awake(gpu)) => (Some(gpu), false),
-            Some(Nvidia::Asleep) => (None, true),
-            None => (None, false),
-        };
+        let GpuReading {
+            gpu,
+            asleep,
+            unavailable,
+        } = read_gpu(interval);
 
         let rate = |group: &PathBuf| rates.get(group).copied().unwrap_or_default();
-        let disk = |r: Rates| (r.read_bytes_per_sec + r.write_bytes_per_sec) as u64;
         // Processes are read only for expanded apps; one that folds up forgets its last sample.
         self.drills.retain(|key, _| expanded.contains(key));
         let mut apps = Vec::new();
@@ -92,7 +148,7 @@ impl Reader {
                             ram: Some(group.ram),
                             swap: Some(group.swap),
                             cpu: group.cpu_cores as f32,
-                            disk_per_s: Some(disk(rate(&group.path))),
+                            disk_per_s: disk(&rate(&group.path)),
                         });
                     }
                     parts.extend(group.processes.iter().map(|p| Part {
@@ -140,7 +196,7 @@ impl Reader {
                 swap: app.swap,
                 file_cache: app.file_cache,
                 cpu: app.cgroups.iter().map(|g| rate(g).cpu_cores as f32).sum(),
-                disk_per_s: app.cgroups.iter().map(|g| disk(rate(g))).sum(),
+                disk_per_s: sum_known(app.cgroups.iter().map(|g| disk(&rate(g)))),
                 gpu_percent: usage(|u| u.sm_percent).map(|p| p as f32),
                 vram: usage(|u| u.vram_bytes as f64).map(|b| b as u64),
                 parts,
@@ -151,20 +207,17 @@ impl Reader {
             });
         }
 
-        let total_rates = rates
-            .values()
-            .fold((0.0, 0), |(cpu, io), r| (cpu + r.cpu_cores, io + disk(*r)));
         Ok(Snapshot {
             taken: now,
             ram_total: mem.total,
-            swap_total: swap_total(),
+            swap_total: swap().0,
             zswap_pool: mem.zswap_pool,
             file_cache: mem.apps.iter().map(|a| a.file_cache).sum(),
             kernel: mem.kernel_and_drivers,
             free: mem.free,
             apps,
             closed,
-            cpu_used: total_rates.0 as f32,
+            cpu_used,
             cpu_cores: self.cores,
             nvidia_percent: match &gpu {
                 Some(g) => Some(g.utilization_percent.unwrap_or(0) as f32),
@@ -175,7 +228,51 @@ impl Reader {
                 .as_ref()
                 .map(|g| (g.vram_used_bytes, g.vram_total_bytes)),
             gpu_asleep: asleep,
-            disk_per_s: total_rates.1,
+            nvidia_unavailable: unavailable,
+            disk_per_s,
+            unsplit: None,
+        })
+    }
+
+    /// A system that can't split memory by app: totals from /proc/meminfo, and the root group's
+    /// CPU and disk counters, which cover the whole system.
+    fn read_unsplit(&mut self, interval: Duration) -> io::Result<Snapshot> {
+        let totals = memory::totals(Path::new(PROC_ROOT))?;
+        let (taken, _, cpu_used, disk_per_s) = self.rates(&[PathBuf::new()]);
+        let GpuReading {
+            gpu,
+            asleep,
+            unavailable,
+        } = read_gpu(interval);
+        let (swap_total, swap_free) = swap();
+        Ok(Snapshot {
+            taken,
+            ram_total: totals.total,
+            swap_total,
+            zswap_pool: totals.zswap_pool,
+            file_cache: totals.file_cache,
+            kernel: totals
+                .total
+                .saturating_sub(totals.free + totals.file_cache + totals.zswap_pool),
+            free: totals.free,
+            apps: Vec::new(),
+            closed: Closed::default(),
+            cpu_used,
+            cpu_cores: self.cores,
+            nvidia_percent: match &gpu {
+                Some(g) => Some(g.utilization_percent.unwrap_or(0) as f32),
+                None => asleep.then_some(0.0),
+            },
+            intel_percent: None,
+            vram: gpu
+                .as_ref()
+                .map(|g| (g.vram_used_bytes, g.vram_total_bytes)),
+            gpu_asleep: asleep,
+            nvidia_unavailable: unavailable,
+            disk_per_s,
+            unsplit: Some(Unsplit {
+                swap_used: swap_total.saturating_sub(swap_free),
+            }),
         })
     }
 }
@@ -234,12 +331,27 @@ fn main_process(pid: u32) -> Option<String> {
     Some(processes::full_name(&dir, comm.trim_end_matches('\n')))
 }
 
-/// `SwapTotal` from /proc/meminfo; 0 without swap.
-fn swap_total() -> u64 {
+/// `SwapTotal` and `SwapFree` from /proc/meminfo; 0 without swap.
+fn swap() -> (u64, u64) {
     let meminfo = std::fs::read_to_string(Path::new(PROC_ROOT).join("meminfo")).unwrap_or_default();
-    meminfo
-        .lines()
-        .find_map(|l| l.strip_prefix("SwapTotal:"))
-        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
-        .map_or(0, |kb| kb * 1024)
+    let get = |key: &str| {
+        meminfo
+            .lines()
+            .find_map(|l| l.strip_prefix(key))
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+            .map_or(0, |kb| kb * 1024)
+    };
+    (get("SwapTotal:"), get("SwapFree:"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sum_known;
+
+    #[test]
+    fn disk_sums_the_groups_that_have_it_and_is_unknown_when_none_do() {
+        assert_eq!(sum_known([Some(1), None, Some(2)].into_iter()), Some(3));
+        assert_eq!(sum_known([None, None].into_iter()), None);
+        assert_eq!(sum_known([Some(0)].into_iter()), Some(0));
+    }
 }

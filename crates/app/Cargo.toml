@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 sebwatch-core = { path = "../core" }
+libc = "0.2"
 zbus = "5"
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-18", "backend-winit", "renderer-femtovg", "accessibility"] }
 

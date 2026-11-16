@@ -39,6 +39,9 @@ export global Theme {
     out property <color> popup: self.picnic ? #FFF7E8 : self.dark ? #292c30 : #fcfcfc;
     out property <color> hover: self.picnic ? #FDE0E6 : self.dark ? #3daee926 : #3daee91f;
     out property <color> outline: #5B331C;
+    // KMessageWidget's warning colours (Breeze "neutral").
+    out property <color> warning: self.picnic ? #C77A1E : #f67400;
+    out property <color> warning-bg: self.picnic ? #FCE3BF : self.dark ? #f6740033 : #f6740026;
 
     // Bar segments: the apps' series colours (five for RAM's top five, two more so the swap and
     // VRAM bars' own top apps keep one colour in every bar), then the fixed parts, each with its ink.

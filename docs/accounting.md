@@ -105,7 +105,7 @@ the cgroup root, the same key the memory numbers use.
 | Disk read | `io.stat` `rbytes`, summed over devices, bytes/s |
 | Disk write | `io.stat` `wbytes`, summed over devices, bytes/s |
 
-- A group with no `io.stat` (io controller not enabled for its subtree) shows no disk use.
+- A group with no `io.stat` (io controller not enabled for its subtree) shows disk "n/a".
 - A group new since the last read shows zero for one refresh: its counters cover its whole
   life, not the interval. A group that vanished is dropped. A counter that went down (a new
   group reusing the path) counts as zero.
@@ -163,6 +163,23 @@ the cgroup root, the same key the memory numbers use.
   a share of the whole, VRAM of its total, Disk scaled to its own peak in that minute. A
   refresh that didn't happen (the window minimised, a failed reading) is a gap, not a line
   across it; a sleeping GPU's tiles have no graph.
+- **Zero, unavailable and stale.** "0" is a reading of zero and "—" a figure that doesn't apply
+  (a process's disk, an app's GPU when it uses none). A figure that couldn't be read says so: a
+  group without `io.stat` (the io controller off) has disk "n/a" (on Seb's PC, the services in
+  systemd's `session.slice`: plasmashell, KWin, the portals, WirePlumber); the Disk tile sums the
+  groups that have it, and with none anywhere says "unavailable"; an NVIDIA GPU that is awake but whose NVML doesn't start or
+  answer (the library is there, so it isn't "no NVIDIA driver") makes the GPU and VRAM tiles say
+  "unavailable", the VRAM bar "The NVIDIA driver is not answering" and the GPU and VRAM cells
+  "n/a"; no readable `cpu.stat` makes the CPU tile "unavailable". An unavailable tile has no
+  graph. When a whole reading fails, the last one stays with a warning above the bars:
+  "Not updating: the last N readings failed (<error>). Showing the reading from HH:MM:SS."
+- **A system that can't split memory by app**: without the memory controller in the cgroup v2
+  root's `cgroup.subtree_control`, or without a systemd user session
+  (`user.slice/user-<uid>.slice/user@<uid>.service`), a message replaces the table. The bars
+  show totals from `/proc/meminfo`: RAM as "Used, not split by app" (`MemTotal - MemFree -
+  file cache - Zswap`), zswap pool, file cache (`Active(file) + Inactive(file)`) and free; swap
+  as used (`SwapTotal - SwapFree`) and free; VRAM as used and free. CPU and disk come from the
+  cgroup root's own `cpu.stat` and `io.stat`, which cover the whole system.
 - An expanded app reads its processes (`processes.rs`) only while expanded; its rows plus
   "Not attributed to processes" sum to its RAM in use. That row's swap is the app's swap minus
   its processes' swap. It adds " · N unreadable" when N processes couldn't be read, and
