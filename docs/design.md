@@ -78,16 +78,20 @@ cell, and a KDE-style inline warning above the bars when the figures stop updati
 cause and the time of the reading shown. A system that can't split memory by app shows a plain
 message in place of the table (#38).
 
-**Keyboard and screen readers.** Tab goes from the menu button to the search field to the
-table. In the table, Up and Down move the focus, Home and End go to the ends, Right and Left (or
-Enter and Space) expand and fold apps, the fold and Closed apps; the focus follows its row when
-a refresh reorders the rows or a search narrows them. A focused row with a tooltip (an app's
-"Not attributed to processes" row) grows to show it as a second line. The menu opens
-with Enter, Space or Down; its items take the arrows, Enter and Escape. The focused item has
-Breeze's 1 px accent frame inside it (2 px and square in SebChat), shown after a key, not after
-a click. Rows, bar segments, tiles, the menu button and the menu's items have accessible roles
-and names; because AT-SPI through AccessKit 0.24 carries no text values or expanded state, the
-values, a tooltip and "expanded" or "collapsed" are in the description.
+**Keyboard and screen readers.** Tab goes from the menu button to the tiles, the search field,
+the column headers and the table. The tiles are one Tab stop and the headers another: the arrows
+move inside each, and Enter or Space on a header sorts by it. Every tile and column header says
+in one sentence what its number measures (#41): in the bars' tooltip style on hover, at once
+when it has the keyboard focus, and as its accessible description. In the table, Up and Down
+move the focus, Home and End go to the ends, Right and Left (or Enter and Space) expand and fold
+apps, the fold and Closed apps; the focus follows its row when a refresh reorders the rows or a
+search narrows them. A focused row with a tooltip (an app's "Not attributed to processes" row)
+grows to show it as a second line. The menu opens with Enter, Space or Down; its items take the
+arrows, Enter and Escape. The focused item has Breeze's 1 px accent frame inside it (2 px and
+square in SebChat), shown after a key, not after a click. Rows, bar segments, tiles, column
+headers, the menu button and the menu's items have accessible roles and names; because AT-SPI
+through AccessKit 0.24 carries no text values or expanded state, the values, a tooltip and
+"expanded" or "collapsed" are in the description.
 `scripts/a11y` checks the AT-SPI tree on a headless KWin.
 
 ## Footprint
