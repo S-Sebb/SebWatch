@@ -28,7 +28,10 @@ export global Theme {
     out property <color> view: self.picnic ? #FFF7E8 : self.dark ? #141618 : #ffffff;
     out property <color> alt: self.picnic ? #FFF7E8 : self.dark ? #1d1f22 : #f7f7f7;
     out property <color> fg: self.picnic ? #4A2F22 : self.dark ? #fcfcfc : #232629;
-    out property <color> muted: self.picnic ? #73533F : self.dark ? #a1a9b1 : #707d8a;
+    out property <color> muted: self.picnic ? #73533F : self.dark ? #a1a9b1 : #5f6b77; // Breeze's #707d8a is 3.7:1 on the window colour, short of 4.5:1
+    // Muted text on a selected row or menu item: 4.5:1 on the drawn selection (#c7e1ef in Light,
+    // #27495b in Dark, as rendered), where the plain muted colour is 4.0:1.
+    out property <color> selected-muted: self.picnic ? self.muted : self.dark ? #b0b7be : #57626d;
     out property <color> line: self.picnic ? #ECD0AE : self.dark ? #3a3f45 : #cdd0d3;
     out property <color> selection: self.picnic ? #FDE0E6 : self.dark ? #3daee947 : #3daee938;
     out property <color> accent: self.picnic ? #B8445F : #3daee9;

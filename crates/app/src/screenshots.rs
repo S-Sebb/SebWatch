@@ -125,6 +125,14 @@ fn find(pixels: &[Rgb8Pixel], width: u32, colour: slint::Color) -> (f32, f32) {
     (x as f32 + run as f32 / 2.0, y as f32 + 12.0)
 }
 
+/// Expands or folds a row by its key, as a click would but without focusing it.
+fn toggle(ui: &MainWindow, key: &str) {
+    crate::VIEW.with_borrow_mut(|view| {
+        view.toggle(key);
+        crate::show(ui, view.render());
+    });
+}
+
 #[test]
 #[ignore = "writes PNG files; run through scripts/screenshots"]
 fn screenshots() {
@@ -164,8 +172,7 @@ fn screenshots() {
         };
         window.set_size(PhysicalSize::new(shot.width, shot.height));
 
-        ui.set_selected("Android emulator".into());
-        ui.invoke_toggle("Android emulator".into());
+        ui.invoke_pick(1);
         let first = shot.render();
         let android = ui.global::<Theme>().get_series().row_data(1).unwrap();
         let (x, y) = find(&first, shot.width, android);
@@ -207,11 +214,11 @@ fn screenshots() {
 
         // Closed apps hovered: the segment after Other apps, grey too, so the rightmost pixel
         // of that grey; and its row expanded in a window tall enough for the whole table.
-        ui.invoke_toggle("Android emulator".into());
+        toggle(&ui, "Android emulator");
         let other = ui.global::<Theme>().get_other();
         let line = &first[(y as u32 * shot.width) as usize..][..shot.width as usize];
         let closed = line.iter().rposition(|&p| same(p, other)).unwrap() as f32 - 3.0;
-        ui.invoke_toggle("\u{0}closed".into());
+        toggle(&ui, "\u{0}closed");
         window.set_size(PhysicalSize::new(shot.width, 1300));
         let tall = Shot {
             window: window.clone(),
@@ -225,8 +232,8 @@ fn screenshots() {
         tall.wait(Duration::from_millis(800));
         tall.save(&tall.render(), &dir.join(format!("closed-{name}.png")));
         window.set_size(PhysicalSize::new(shot.width, shot.height));
-        ui.invoke_toggle("\u{0}closed".into());
-        ui.invoke_toggle("Android emulator".into());
+        toggle(&ui, "\u{0}closed");
+        toggle(&ui, "Android emulator");
 
         shot.pointer(4.0, 4.0, false);
         crate::present(&ui, crate::sample::asleep());
@@ -234,8 +241,7 @@ fn screenshots() {
 
         // Sorted by swap, largest first, then smallest first.
         crate::present(&ui, crate::sample::snapshot());
-        ui.invoke_toggle("Android emulator".into());
-        ui.set_selected("".into());
+        toggle(&ui, "Android emulator");
         ui.invoke_sort_clicked(1);
         shot.save(&shot.render(), &dir.join(format!("sort-swap-{name}.png")));
         ui.invoke_sort_clicked(1);
@@ -263,6 +269,54 @@ fn screenshots() {
         ui.hide().unwrap();
     }
 
+    // The keyboard focus, reached by Tab (menu button, search field, table): the Android
+    // emulator's row, its leftover row with the tooltip, the search field, then the menu on Dark.
+    for (choice, name, height) in [
+        (ThemeChoice::Light, "light", 844),
+        (ThemeChoice::Dark, "dark", 844),
+        (ThemeChoice::Sebchat, "sebchat", 1024),
+    ] {
+        let ui = MainWindow::new().unwrap();
+        ui.global::<Theme>().set_choice(choice);
+        crate::setup(
+            &ui,
+            crate::sample::snapshot(),
+            Default::default(),
+            |_| {},
+            |_| {},
+        );
+        ui.show().unwrap();
+        let shot = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width: 1000,
+            height,
+        };
+        window.set_size(PhysicalSize::new(shot.width, shot.height));
+        ui.invoke_pick(1);
+        for _ in 0..3 {
+            shot.tap(Key::Tab);
+        }
+        shot.save(&shot.render(), &dir.join(format!("focus-row-{name}.png")));
+        for _ in 0..5 {
+            shot.tap(Key::DownArrow);
+        }
+        assert_eq!(ui.get_current(), 6);
+        shot.save(
+            &shot.render(),
+            &dir.join(format!("focus-leftover-{name}.png")),
+        );
+        shot.tap(Key::Backtab);
+        if choice == ThemeChoice::Light {
+            shot.save(&shot.render(), &dir.join("focus-search-light.png"));
+        }
+        shot.tap(Key::Backtab);
+        shot.tap(Key::Return);
+        shot.tap(Key::DownArrow);
+        shot.save(&shot.render(), &dir.join(format!("focus-menu-{name}.png")));
+        ui.hide().unwrap();
+    }
+
     // This PC's own reading through sebwatch-core, twice so CPU and disk have rates, with the
     // biggest app expanded into its processes.
     let mut reader = crate::live::Reader::new();
@@ -277,8 +331,7 @@ fn screenshots() {
         |_| {},
     );
     let biggest = ui.get_rows().row_data(0).unwrap().key;
-    ui.set_selected(biggest.clone());
-    ui.invoke_toggle(biggest.clone());
+    ui.invoke_pick(0);
     std::thread::sleep(interval);
     let expanded = [biggest.to_string()].into();
     crate::present(&ui, reader.read(interval, &expanded).unwrap());

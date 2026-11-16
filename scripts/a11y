@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# What a screen reader sees: runs the app on a headless KWin (`--virtual`) with its own D-Bus
+# session and accessibility bus, so nothing shows on the desktop, and reads its AT-SPI tree.
+# Clicks the second row through AT-SPI and checks the focus lands on it and stays there across
+# a refresh. One line per check; the tree in target/logs/a11y-tree.txt, other logs beside it.
+set -u
+cd "$(dirname "$0")/.."
+
+logs=$PWD/target/logs
+mkdir -p "$logs"
+
+if [ -z "${A11Y_SESSION:-}" ]; then
+    for tool in cargo kwin_wayland dbus-run-session gdbus /usr/libexec/at-spi-bus-launcher; do
+        command -v "$tool" >/dev/null || { echo "MISSING: $tool not found"; exit 1; }
+    done
+    python3 -c 'import pyatspi' 2>/dev/null || { echo "MISSING: python3 pyatspi"; exit 1; }
+    timeout 900 cargo build -p sebwatch >"$logs/a11y-build.log" 2>&1 ||
+        { echo "FAIL build (see $logs/a11y-build.log)"; exit 1; }
+    # A private session bus, as in scripts/bench, so neither the virtual KWin nor the
+    # accessibility bus meets the desktop's own.
+    bus=$logs/a11y-bus.conf
+    cat >"$bus" <<'EOF'
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+    results=$logs/a11y.txt
+    A11Y_SESSION=$results timeout 120 \
+        dbus-run-session --config-file="$bus" -- "$0" >"$logs/a11y-session.log" 2>&1 </dev/null
+    status=$?
+    cat "$results"
+    [ "$status" = 124 ] && echo "FAIL timed out (see $logs/a11y-session.log)"
+    exit "$status"
+fi
+exec >"$A11Y_SESSION"
+
+socket=sebwatch-a11y-$$
+pids=()
+cleanup() {
+    kill "${pids[@]}" 2>/dev/null
+    wait 2>/dev/null
+}
+trap cleanup EXIT
+
+/usr/libexec/at-spi-bus-launcher --launch-immediately >"$logs/a11y-bus.log" 2>&1 &
+pids+=($!)
+# The registry, which the accessibility bus would start through systemd, from the desktop's
+# session.
+sleep 1
+/usr/libexec/at-spi2-registryd >"$logs/a11y-registry.log" 2>&1 &
+pids+=($!)
+kwin_wayland --virtual --no-lockscreen --socket "$socket" --width 1280 --height 900 \
+    >"$logs/a11y-kwin.log" 2>&1 &
+pids+=($!)
+for _ in $(seq 50); do
+    [ -S "$XDG_RUNTIME_DIR/$socket" ] && break
+    sleep 0.2
+done
+[ -S "$XDG_RUNTIME_DIR/$socket" ] || { echo "FAIL kwin did not start (see $logs/a11y-kwin.log)"; exit 1; }
+# Screen readers set this; AccessKit only builds its tree once it is on.
+gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
+    --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>' >/dev/null ||
+    { echo "FAIL accessibility bus did not start (see $logs/a11y-bus.log)"; exit 1; }
+
+env -u DISPLAY WAYLAND_DISPLAY="$socket" target/debug/sebwatch >"$logs/a11y-app.log" 2>&1 &
+pids+=($!)
+sleep 5
+kill -0 "${pids[-1]}" 2>/dev/null || { echo "FAIL app exited (see $logs/a11y-app.log)"; exit 1; }
+
+timeout 60 python3 -I - "$logs/a11y-tree.txt" <<'EOF'
+import sys, time
+import pyatspi
+
+out = open(sys.argv[1], "w")
+app = next((a for a in pyatspi.Registry.getDesktop(0) if a and a.name.lower().startswith("sebwatch")), None)
+if app is None:
+    print("FAIL app not on the accessibility bus")
+    sys.exit(1)
+
+nodes = []
+def walk(node, depth):
+    if node is None:
+        return
+    states = node.getState()
+    names = [name for s, name in [(pyatspi.STATE_FOCUSED, "focused"), (pyatspi.STATE_SELECTED, "selected"),
+             (pyatspi.STATE_CHECKED, "checked")] if states.contains(s)]
+    entry = dict(role=node.getRoleName(), name=node.name, description=node.description,
+                 states=names, node=node)
+    nodes.append(entry)
+    out.write("  " * depth + f"[{entry['role']}] {entry['name']!r}"
+              + (f" description={entry['description']!r}" if entry["description"] else "")
+              + (f" {names}" if names else "") + "\n")
+    for child in node:
+        walk(child, depth + 1)
+
+def dump():
+    nodes.clear()
+    walk(app, 0)
+
+dump()
+status = 0
+def check(name, ok, why):
+    global status
+    print(("PASS " if ok else "FAIL ") + name + ("" if ok else f": {why}"))
+    status |= not ok
+
+rows = [n for n in nodes if n["role"] == "list item" and "RAM in use" in n["description"]]
+check("rows have names and values", len(rows) > 3 and all(r["name"] for r in rows),
+      f"{len(rows)} rows with values")
+check("app rows say whether they are expanded", all(r["description"].startswith("collapsed, ") for r in rows),
+      rows[0]["description"])
+button = [n for n in nodes if n["role"] == "button" and n["name"] == "Menu"]
+check("menu button", len(button) == 1, "no button named Menu")
+segments = [n for n in nodes if n["role"] == "list item" and "% of" in n["description"]]
+check("bar segments have names, values and tooltips", len(segments) > 5 and all(s["name"] for s in segments),
+      f"{len(segments)} segments")
+tiles = [n for n in nodes if n["name"] in ("CPU", "Disk") and n["description"]]
+check("tiles have names and values", len(tiles) == 2, f"{len(tiles)} tiles")
+
+# A click through AT-SPI focuses the row; the screen reader's focus is on it, not on the list.
+second = rows[1]
+action = second["node"].queryAction()
+action.doAction(0)
+time.sleep(1)
+dump()
+rows = [n for n in nodes if n["role"] == "list item" and "RAM in use" in n["description"]]
+focused = [r["name"] for r in rows if "focused" in r["states"]]
+check("clicked row has the focus and is expanded", focused == [second["name"]] and rows[1]["description"].startswith("expanded, "),
+      f"focused {focused}, {rows[1]['description']}")
+time.sleep(4.5)
+dump()
+rows = [n for n in nodes if n["role"] == "list item" and "RAM in use" in n["description"]]
+focused = [r["name"] for r in rows if "focused" in r["states"]]
+check("focus kept across refreshes", focused == [second["name"]], f"focused {focused}")
+
+# The menu opened through AT-SPI: its items are radio buttons, the current theme checked.
+button[0]["node"].queryAction().doAction(0)
+time.sleep(1)
+dump()
+items = [n for n in nodes if n["role"] == "radio button"]
+names = [i["name"] for i in items]
+checked = [i["name"] for i in items if "checked" in i["states"]]
+check("menu items", names == ["System", "Light", "Dark", "SebChat"] and len(checked) == 1,
+      f"items {names}, checked {checked}")
+out.close()
+sys.exit(status)
+EOF

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::icons::Icons;
-use crate::{Bar, Row, RowKind, Segment, SegmentKind, Tile};
+use crate::{Bar, Row, RowKind, Segment, SegmentKind, TableKey, Tile};
 
 /// Apps each bar names; the rest are its "Other apps".
 const NAMED: usize = 5;
@@ -221,7 +221,8 @@ impl Colours {
     }
 }
 
-/// The window's state across refreshes: colours, expanded rows and loaded icons.
+/// The window's state across refreshes: colours, expanded rows, the keyboard focus and loaded
+/// icons.
 #[derive(Default)]
 pub struct View {
     last: Option<Snapshot>,
@@ -231,6 +232,27 @@ pub struct View {
     colours: Colours,
     expanded: HashSet<String>,
     icons: Icons,
+    /// The last rendered rows, in order.
+    tree: Vec<Node>,
+    focus: Option<Focus>,
+}
+
+/// A rendered row's place in the tree.
+struct Node {
+    key: String,
+    /// The row Left goes to: the app above a process, the fold above the apps in it.
+    parent: Option<String>,
+    /// An app, the "N more apps" fold or the closed apps.
+    expandable: bool,
+}
+
+/// The row the keyboard is on. It follows its row's key, so it stays on the same app when a
+/// refresh reorders the rows or a search narrows them; a row that went away hands it to its
+/// parent, or to the row now at its place.
+struct Focus {
+    key: String,
+    parent: Option<String>,
+    index: usize,
 }
 
 pub struct Shown {
@@ -243,6 +265,8 @@ pub struct Shown {
     pub sort: Sort,
     /// "Filtered: 5 of 18 apps · …" while searching, else empty.
     pub filtered: String,
+    /// The focused row's index in `rows`, -1 for none.
+    pub focus: i32,
 }
 
 /// The key of the "N more apps" row.
@@ -295,6 +319,115 @@ impl View {
         }
     }
 
+    /// A click on the row at `index`: focuses it, and expands or folds an app. True when it did.
+    pub fn pick(&mut self, index: usize) -> bool {
+        let Some(node) = self.tree.get(index) else {
+            return false;
+        };
+        let key = node.key.clone();
+        let toggled = node.expandable;
+        self.focus_on(index);
+        if toggled {
+            self.toggle(&key);
+        }
+        toggled
+    }
+
+    /// A key pressed in the table. True when it expanded or folded an app, which then needs a
+    /// new reading for its processes.
+    pub fn press(&mut self, key: TableKey) -> bool {
+        let Some(last) = self.tree.len().checked_sub(1) else {
+            return false;
+        };
+        let Some(i) = self.focus.as_ref().map(|f| f.index) else {
+            // The first key only shows where the focus is.
+            self.focus_on(if key == TableKey::End { last } else { 0 });
+            return false;
+        };
+        let node = &self.tree[i];
+        let expanded = self.expanded.contains(&node.key);
+        match key {
+            TableKey::Up => self.focus_on(i.saturating_sub(1)),
+            TableKey::Down => self.focus_on((i + 1).min(last)),
+            TableKey::Home => self.focus_on(0),
+            TableKey::End => self.focus_on(last),
+            TableKey::Right if node.expandable && !expanded => {
+                let key = node.key.clone();
+                self.toggle(&key);
+                return true;
+            }
+            // On an open app, Right steps into its first row.
+            TableKey::Right => {
+                if self
+                    .tree
+                    .get(i + 1)
+                    .is_some_and(|next| next.parent.as_ref() == Some(&node.key))
+                {
+                    self.focus_on(i + 1);
+                }
+            }
+            TableKey::Left if node.expandable && expanded => {
+                let key = node.key.clone();
+                self.toggle(&key);
+                return true;
+            }
+            TableKey::Left => {
+                if let Some(up) = node
+                    .parent
+                    .as_ref()
+                    .and_then(|p| self.tree.iter().position(|n| &n.key == p))
+                {
+                    self.focus_on(up);
+                }
+            }
+            TableKey::Toggle if node.expandable => {
+                let key = node.key.clone();
+                self.toggle(&key);
+                return true;
+            }
+            TableKey::Toggle => {}
+        }
+        false
+    }
+
+    fn focus_on(&mut self, index: usize) {
+        let node = &self.tree[index];
+        self.focus = Some(Focus {
+            key: node.key.clone(),
+            parent: node.parent.clone(),
+            index,
+        });
+    }
+
+    /// Finds the focused row in newly rendered rows.
+    fn refocus(&mut self) -> i32 {
+        let Some(focus) = &self.focus else {
+            return -1;
+        };
+        let at = |key: &str| self.tree.iter().position(|n| n.key == key);
+        let index = at(&focus.key)
+            .or_else(|| focus.parent.as_deref().and_then(at))
+            .or_else(|| self.tree.len().checked_sub(1).map(|l| focus.index.min(l)));
+        match index {
+            Some(i) => {
+                self.focus_on(i);
+                i as i32
+            }
+            None => {
+                self.focus = None;
+                -1
+            }
+        }
+    }
+
+    fn node(&mut self, key: &str, parent: Option<&str>, expandable: bool) {
+        self.tree.push(Node {
+            key: key.into(),
+            parent: parent.map(String::from),
+            expandable,
+        });
+    }
+
     /// Shows a new reading.
     pub fn update(&mut self, snapshot: Snapshot) -> Shown {
         self.last = Some(snapshot);
@@ -310,6 +443,7 @@ impl View {
     }
 
     fn show(&mut self, s: &Snapshot) -> Shown {
+        self.tree.clear();
         let ram = top(&s.apps, |a| a.ram);
         let swap = top(&s.apps, |a| a.swap);
         let vram = top(&s.apps, |a| a.vram.unwrap_or(0));
@@ -331,6 +465,7 @@ impl View {
             vram: vram_bar(s, &series, &coloured(vram, &series)),
             tiles: tiles(s),
             rows: self.rows(s, &series),
+            focus: self.refocus(),
             sort: self.sort,
             filtered: match self.searching() {
                 Some(query) => format!(
@@ -363,7 +498,7 @@ impl View {
             None => sorted.len().min(LISTED),
         };
         for app in &sorted[..listed] {
-            self.app_rows(&mut rows, app, colour(app));
+            self.app_rows(&mut rows, app, colour(app), None);
         }
         let more = &sorted[listed..];
         if !more.is_empty() {
@@ -376,9 +511,10 @@ impl View {
                 ram: bytes(more.iter().map(|a| a.ram).sum()).into(),
                 ..empty_row()
             });
+            self.node(MORE, None, true);
             if expanded {
                 for app in more {
-                    self.app_rows(&mut rows, app, colour(app));
+                    self.app_rows(&mut rows, app, colour(app), Some(MORE));
                 }
             }
         }
@@ -393,7 +529,7 @@ impl View {
     }
 
     /// Last, whatever the sort: it isn't an app, and it shrinks as the kernel reclaims it.
-    fn closed_rows(&self, rows: &mut Vec<Row>, closed: &Closed) {
+    fn closed_rows(&mut self, rows: &mut Vec<Row>, closed: &Closed) {
         if closed.exited.is_empty() {
             return;
         }
@@ -409,10 +545,15 @@ impl View {
             cache: bytes(closed.file_cache).into(),
             ..empty_row()
         });
+        self.node(CLOSED, None, true);
         if expanded {
+            for e in &closed.exited {
+                self.node(&format!("{CLOSED}\u{1}{}", e.name), Some(CLOSED), false);
+            }
             rows.extend(closed.exited.iter().map(|e| Row {
                 kind: RowKind::Process,
                 depth: 1,
+                key: format!("{CLOSED}\u{1}{}", e.name).into(),
                 name: e.name.as_str().into(),
                 detail: "exited".into(),
                 ram: bytes(e.ram).into(),
@@ -423,8 +564,9 @@ impl View {
         }
     }
 
-    fn app_rows(&mut self, rows: &mut Vec<Row>, app: &App, series: i32) {
+    fn app_rows(&mut self, rows: &mut Vec<Row>, app: &App, series: i32, parent: Option<&str>) {
         let expanded = self.expanded.contains(&app.key);
+        self.node(&app.key, parent, true);
         rows.push(Row {
             kind: RowKind::App,
             depth: 0,
@@ -447,7 +589,18 @@ impl View {
             return;
         }
         let grouped = app.parts.iter().any(|p| p.group);
+        // A process under a group steps back to its group, else to the app.
+        let mut group: Option<String> = None;
         for part in &app.parts {
+            let key = format!("{}\u{1}{}\u{1}{}", app.key, part.name, part.detail);
+            if part.group {
+                group = Some(key.clone());
+            }
+            let parent = match &group {
+                Some(group) if !part.group => group.clone(),
+                _ => app.key.clone(),
+            };
+            self.node(&key, Some(&parent), false);
             rows.push(Row {
                 kind: if part.group {
                     RowKind::Group
@@ -455,6 +608,7 @@ impl View {
                     RowKind::Process
                 },
                 depth: if grouped && !part.group { 2 } else { 1 },
+                key: key.into(),
                 name: part.name.as_str().into(),
                 detail: part.detail.as_str().into(),
                 ram: part.ram.map_or(NONE.into(), bytes).into(),
@@ -467,7 +621,12 @@ impl View {
         if app.unattributed_ram + app.unattributed_swap + app.over_charge > 0
             || !app.unreadable.is_empty()
         {
-            rows.push(leftover_row(app));
+            let key = format!("{}\u{1}leftover", app.key);
+            self.node(&key, Some(&app.key), false);
+            rows.push(Row {
+                key: key.into(),
+                ..leftover_row(app)
+            });
         }
     }
 }
@@ -637,7 +796,17 @@ fn segment(kind: SegmentKind, name: &str, size: u64, total: u64, notes: &[String
         )
         .into(),
         notes: strings(notes),
+        description: "".into(),
     }
+}
+
+/// The tooltip's lines in one, for screen readers.
+fn describe(segment: &Segment) -> SharedString {
+    let mut text = segment.tip.to_string();
+    for note in slint::Model::iter(&segment.notes) {
+        text = format!("{text}; {note}");
+    }
+    text.into()
 }
 
 fn strings(lines: &[String]) -> ModelRc<SharedString> {
@@ -675,6 +844,7 @@ fn stack(segments: &mut [Segment]) {
     let mut start = 0.0;
     for segment in segments {
         segment.start = start;
+        segment.description = describe(segment);
         start += segment.fraction;
     }
 }
@@ -1194,6 +1364,75 @@ mod tests {
         assert_eq!(rows[6].depth, 1);
         view.toggle("Android emulator");
         assert_eq!(view.render().rows.len(), collapsed);
+    }
+
+    #[test]
+    fn keys_move_through_rows_and_expand_and_fold_apps() {
+        let mut view = View::default();
+        let rows = view.update(crate::sample::snapshot()).rows.len() as i32;
+        let mut press = |key| {
+            let toggled = view.press(key);
+            (view.render().focus, toggled)
+        };
+        // The first key only shows the focus, on the first row.
+        assert_eq!(press(TableKey::Down), (0, false));
+        assert_eq!(press(TableKey::Down), (1, false));
+        // Right opens the Android emulator, then steps into its processes.
+        assert_eq!(press(TableKey::Right), (1, true));
+        assert_eq!(press(TableKey::Right), (2, false));
+        assert_eq!(press(TableKey::Down), (3, false));
+        // Left from a process goes back to its app, then folds it.
+        assert_eq!(press(TableKey::Left), (1, false));
+        assert_eq!(press(TableKey::Left), (1, true));
+        assert_eq!(press(TableKey::Up), (0, false));
+        assert_eq!(press(TableKey::Up), (0, false));
+        // Closed apps, last, open like an app; Left from an exited app returns to them.
+        assert_eq!(press(TableKey::End), (rows - 1, false));
+        assert_eq!(press(TableKey::Toggle), (rows - 1, true));
+        assert_eq!(press(TableKey::Down), (rows, false));
+        assert_eq!(press(TableKey::Left), (rows - 1, false));
+        // The "N more apps" fold above them too.
+        assert_eq!(press(TableKey::Up), (rows - 2, false));
+        assert_eq!(press(TableKey::Right), (rows - 2, true));
+        assert_eq!(press(TableKey::Right), (rows - 1, false));
+        assert_eq!(press(TableKey::Left), (rows - 2, false));
+        assert_eq!(press(TableKey::Home), (0, false));
+        assert!(view.pick(1));
+        assert_eq!(view.render().focus, 1);
+        assert!(view.expanded().contains("Android emulator"));
+    }
+
+    #[test]
+    fn focus_follows_its_row_across_refreshes_and_searches() {
+        let mut view = View::default();
+        view.update(crate::sample::snapshot());
+        view.pick(1);
+        view.render();
+        // Android emulator's netsimd.
+        view.press(TableKey::Right);
+        view.press(TableKey::Down);
+        assert_eq!(view.render().rows[3].name, "netsimd");
+
+        // Android emulator overtakes Claude agents: the focus moves with its row.
+        let mut s = crate::sample::snapshot();
+        s.apps[1].ram = s.apps[0].ram * 2;
+        let shown = view.update(s);
+        assert_eq!(shown.focus, 2);
+        assert_eq!(shown.rows[2].name, "netsimd");
+
+        // netsimd ends: the focus goes to its app.
+        let mut s = crate::sample::snapshot();
+        s.apps[1].parts.retain(|p| p.name != "netsimd");
+        let shown = view.update(s);
+        assert_eq!(shown.focus, 1);
+        assert_eq!(shown.rows[1].name, "Android emulator");
+
+        // A search that keeps the app keeps the focus on it.
+        view.search = "guide35.service".into();
+        let shown = view.render();
+        assert_eq!(shown.rows[shown.focus as usize].name, "Android emulator");
+        view.search = "".into();
+        assert_eq!(view.render().focus, 1);
     }
 
     #[test]

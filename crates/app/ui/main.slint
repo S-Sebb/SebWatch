@@ -1,4 +1,4 @@
-import { ListView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Theme, ThemeChoice, Art, SegmentKind, SegmentFill, Swatch, Dashed, Card, Chevron } from "theme.slint";
 
 export { Theme, ThemeChoice, Art, SegmentKind }
@@ -21,6 +21,8 @@ export struct Segment {
     // The tooltip's first line, then its muted lines.
     tip: string,
     notes: [string],
+    // The tooltip in one line, for screen readers.
+    description: string,
 }
 
 export struct Bar {
@@ -38,6 +40,9 @@ export struct Tile {
 }
 
 export enum RowKind { app, group, process, kernel, more }
+
+// A key the table acts on; toggle is Enter or Space.
+export enum TableKey { up, down, home, end, left, right, toggle }
 
 // A table row: an app, one of an expanded app's processes or child groups, its kernel share,
 // the fold holding the rest, or Closed apps (cache). Absent values are "—".
@@ -100,10 +105,15 @@ component TipCard inherits Rectangle {
 
 component SegmentBar {
     in property <[Segment]> segments;
+    in property <string> title;
     in property <length> gap: 2px;
     property <length> share: self.width - (self.segments.length - 1) * self.gap;
     property <int> hovered: -1;
     height: 28px;
+    // A list of parts, so it carries over to another chart.
+    accessible-role: list;
+    accessible-label: self.title;
+    accessible-item-count: self.segments.length;
 
     // An empty bar: a sleeping GPU's VRAM, not read so as not to wake it.
     if root.segments.length == 0: Dashed {
@@ -141,6 +151,10 @@ component SegmentBar {
     for s[i] in root.segments: Rectangle {
             x: s.start * root.share + i * root.gap;
             width: s.fraction * root.share;
+            accessible-role: list-item;
+            accessible-label: s.detail == "" ? s.name : s.name + " " + s.detail;
+            accessible-description: s.description;
+            accessible-item-index: i;
             if touch.has-hover: Rectangle {
                 x: Theme.picnic ? -4px : -3px;
                 y: self.x;
@@ -216,6 +230,7 @@ component BarView {
             }
         }
         SegmentBar {
+            title: root.bar.title + ", " + root.bar.total;
             segments: root.bar.segments;
         }
         // An empty FlexboxLayout limits the column's width to almost nothing.
@@ -244,6 +259,10 @@ component BarView {
 component TileView inherits Card {
     in property <Tile> tile;
     inset: 12px;
+    // AT-SPI (AccessKit 0.24) passes on no text values, so the value is the description.
+    accessible-role: groupbox;
+    accessible-label: self.tile.name;
+    accessible-description: self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit;
     Rectangle {
         background: Theme.picnic ? transparent : Theme.view;
         border-width: Theme.picnic ? 0 : 1px;
@@ -297,7 +316,21 @@ component TileView inherits Card {
     }
 }
 
-// The settings menu: for now only the theme.
+// The keyboard focus: Breeze's 1 px accent frame inside the item, or a 2 px square one in SebChat.
+component FocusRing {
+    Rectangle {
+        x: Theme.picnic ? 0 : 1px;
+        y: self.x;
+        width: root.width - 2 * self.x;
+        height: root.height - 2 * self.y;
+        border-width: Theme.picnic ? 2px : 1px;
+        border-radius: Theme.picnic ? 0 : 3px;
+        border-color: Theme.accent;
+    }
+}
+
+// The settings menu: for now only the theme. Enter, Space or Down opens it; in it, the arrows
+// move, Enter or Space picks and Escape closes.
 component MenuButton {
     property <[{choice: ThemeChoice, name: string, note: string}]> choices: [
         { choice: ThemeChoice.system, name: "System", note: "(follows the desktop)" },
@@ -306,12 +339,32 @@ component MenuButton {
         { choice: ThemeChoice.sebchat, name: "SebChat", note: "" },
     ];
     callback chosen(ThemeChoice);
+    // The item the keyboard is on.
+    property <int> current;
+    // Focus frames only after a key, as in KDE apps.
+    property <bool> keyboard;
     width: 30px;
     height: 30px;
     accessible-role: button;
     accessible-label: "Menu";
+    accessible-description: "Theme";
     accessible-action-default => {
+        root.open(false);
+    }
+
+    function open(keyboard: bool) {
+        root.keyboard = keyboard;
+        root.current = Theme.choice == ThemeChoice.system ? 0 : Theme.choice == ThemeChoice.light ? 1 : Theme.choice == ThemeChoice.dark ? 2 : 3;
         menu.show();
+    }
+
+    function choose(choice: ThemeChoice) {
+        Theme.choice = choice;
+        root.chosen(choice);
+        menu.close();
+        if root.keyboard {
+            scope.focus();
+        }
     }
 
     Rectangle {
@@ -329,9 +382,25 @@ component MenuButton {
         height: Theme.picnic ? 3px : 1.5px;
         background: Theme.fg;
     }
+    if scope.has-focus && root.keyboard: FocusRing {
+        width: 100%;
+        height: 100%;
+    }
     touch := TouchArea {
         clicked => {
-            menu.show();
+            root.open(false);
+        }
+    }
+    scope := FocusScope {
+        focus-gained(reason) => {
+            root.keyboard = reason == FocusReason.tab-navigation || root.keyboard;
+        }
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " || event.text == Key.DownArrow {
+                root.open(true);
+                return accept;
+            }
+            reject
         }
     }
 
@@ -360,29 +429,76 @@ component MenuButton {
                         font-weight: Theme.picnic ? 800 : 400;
                     }
                 }
-                for c in root.choices: Rectangle {
-                    height: 26px;
-                    border-radius: Theme.picnic ? 0 : 3px;
-                    background: Theme.choice == c.choice ? Theme.selection : item.has-hover ? Theme.hover : transparent;
-                    Label {
-                        x: 9px;
-                        text: Theme.choice == c.choice ? "✓" : "";
+                // Only the items in the scope, so the screen reader's focus follows `current`.
+                items := FocusScope {
+                    accessible-role: radio-group;
+                    accessible-label: "Theme";
+                    accessible-delegate-focus: root.current;
+                    accessible-item-count: root.choices.length;
+                    init => {
+                        self.focus();
                     }
-                    HorizontalLayout {
-                        padding-left: 26px;
-                        spacing: 4px;
-                        alignment: start;
-                        Label {
-                            text: c.name;
+                    key-pressed(event) => {
+                        if event.text == Key.UpArrow {
+                            root.current = Math.max(0, root.current - 1);
+                        } else if event.text == Key.DownArrow {
+                            root.current = Math.min(root.choices.length - 1, root.current + 1);
+                        } else if event.text == Key.Home {
+                            root.current = 0;
+                        } else if event.text == Key.End {
+                            root.current = root.choices.length - 1;
+                        } else if event.text == Key.Return || event.text == " " {
+                            root.choose(root.choices[root.current].choice);
+                        } else if event.text == Key.Escape {
+                            menu.close();
+                            if root.keyboard {
+                                scope.focus();
+                            }
+                        } else {
+                            return reject;
                         }
-                        Muted {
-                            text: c.note;
-                        }
+                        root.keyboard = true;
+                        accept
                     }
-                    item := TouchArea {
-                        clicked => {
-                            Theme.choice = c.choice;
-                            root.chosen(c.choice);
+                    VerticalLayout {
+                        for c[i] in root.choices: Rectangle {
+                            height: 26px;
+                            border-radius: Theme.picnic ? 0 : 3px;
+                            background: Theme.choice == c.choice ? Theme.selection : item.has-hover ? Theme.hover : transparent;
+                            accessible-role: radio-button;
+                            accessible-label: c.name;
+                            accessible-description: c.note;
+                            accessible-checkable: true;
+                            accessible-checked: Theme.choice == c.choice;
+                            accessible-item-index: i;
+                            accessible-action-default => {
+                                root.choose(c.choice);
+                            }
+                            Label {
+                                x: 9px;
+                                text: Theme.choice == c.choice ? "✓" : "";
+                            }
+                            HorizontalLayout {
+                                padding-left: 26px;
+                                spacing: 4px;
+                                alignment: start;
+                                Label {
+                                    text: c.name;
+                                }
+                                Muted {
+                                    text: c.note;
+                                    color: Theme.choice == c.choice ? Theme.selected-muted : Theme.muted;
+                                }
+                            }
+                            if i == root.current && root.keyboard: FocusRing {
+        width: 100%;
+        height: 100%;
+    }
+                            item := TouchArea {
+                                clicked => {
+                                    root.choose(c.choice);
+                                }
+                            }
                         }
                     }
                 }
@@ -399,20 +515,44 @@ global Columns {
 
 component Cell inherits Label {
     in property <int> column;
+    in property <color> muted: Theme.muted;
     width: Columns.widths[self.column];
     horizontal-alignment: right;
-    color: self.text == "—" ? Theme.muted : Theme.fg;
+    color: self.text == "—" ? self.muted : Theme.fg;
 }
 
 component RowView inherits Rectangle {
     in property <Row> entry;
-    in property <bool> odd;
+    in property <int> index;
     in property <bool> selected;
+    in property <bool> focused;
     callback clicked();
     property <bool> top: self.entry.kind == RowKind.app || self.entry.kind == RowKind.more;
     property <length> small: Theme.picnic && !self.top ? Theme.small : Theme.font-size;
-    height: Theme.picnic ? 31px : 28px;
-    background: self.selected ? Theme.selection : self.odd && !Theme.picnic ? Theme.alt : transparent;
+    property <color> muted: self.selected ? Theme.selected-muted : Theme.muted;
+    // The focused remainder row holds its explanation as a second line, below the figures.
+    property <bool> show-tip: self.focused && self.entry.tip != "";
+    property <length> line: Theme.picnic ? 31px : 28px;
+    height: self.show-tip ? self.line + tip.preferred-height + 6px : self.line;
+    background: self.selected ? Theme.selection : Math.mod(self.index, 2) == 1 && !Theme.picnic ? Theme.alt : transparent;
+    accessible-role: list-item;
+    accessible-label: self.entry.detail == "" ? self.entry.name : self.entry.name + " " + self.entry.detail;
+    // AT-SPI (AccessKit 0.24) passes on neither text values nor the expanded state, so the
+    // description says both, then the tooltip.
+    accessible-description: (!self.top ? "" : self.entry.expanded ? "expanded, " : "collapsed, ") + Columns.titles[0] + " " + self.entry.ram + ", " + Columns.titles[1] + " " + self.entry.swap + ", " + Columns.titles[2] + " " + self.entry.cache + ", " + Columns.titles[3] + " " + self.entry.cpu + ", " + Columns.titles[4] + " " + self.entry.disk + ", " + Columns.titles[5] + " " + self.entry.gpu + ", " + Columns.titles[6] + " " + self.entry.vram + (self.entry.tip == "" ? "" : ". " + self.entry.tip);
+    accessible-expandable: self.top;
+    accessible-expanded: self.entry.expanded;
+    accessible-item-selectable: true;
+    accessible-item-selected: self.selected;
+    accessible-item-index: self.index;
+    accessible-action-default => {
+        self.clicked();
+    }
+    accessible-action-expand => {
+        if self.top {
+            self.clicked();
+        }
+    }
 
     if Theme.picnic: Rectangle {
         y: parent.height - 1px;
@@ -421,6 +561,8 @@ component RowView inherits Rectangle {
     }
 
     HorizontalLayout {
+        y: 0;
+        height: root.line;
         padding-left: 8px;
         padding-right: 8px;
         HorizontalLayout {
@@ -455,52 +597,79 @@ component RowView inherits Rectangle {
                 Label {
                     text: root.entry.name;
                     font-size: root.small;
-                    color: root.entry.kind == RowKind.kernel || root.entry.kind == RowKind.more ? Theme.muted : Theme.fg;
+                    color: root.entry.kind == RowKind.kernel || root.entry.kind == RowKind.more ? root.muted : Theme.fg;
                     font-weight: root.entry.kind == RowKind.group ? (Theme.picnic ? 800 : 700) : Theme.weight;
                     overflow: elide;
                 }
                 Muted {
                     text: root.entry.detail;
+                    color: root.muted;
                     font-size: root.small;
                 }
             }
         }
         Cell {
             column: 0;
+            muted: root.muted;
             text: root.entry.ram;
             font-size: root.small;
-            color: root.entry.kind == RowKind.more ? Theme.muted : Theme.fg;
+            color: root.entry.kind == RowKind.more ? root.muted : Theme.fg;
         }
         Cell {
             column: 1;
+            muted: root.muted;
             text: root.entry.swap;
             font-size: root.small;
         }
         Cell {
             column: 2;
+            muted: root.muted;
             text: root.entry.cache;
             font-size: root.small;
         }
         Cell {
             column: 3;
+            muted: root.muted;
             text: root.entry.cpu;
             font-size: root.small;
         }
         Cell {
             column: 4;
+            muted: root.muted;
             text: root.entry.disk;
             font-size: root.small;
         }
         Cell {
             column: 5;
+            muted: root.muted;
             text: root.entry.gpu;
             font-size: root.small;
         }
         Cell {
             column: 6;
+            muted: root.muted;
             text: root.entry.vram;
             font-size: root.small;
         }
+    }
+
+    tip := Label {
+        x: 8px + 74px;
+        y: root.line - 2px;
+        width: root.width - self.x - 16px;
+        visible: root.show-tip;
+        text: root.show-tip ? root.entry.tip : "";
+        font-size: Theme.small;
+        color: root.muted;
+        wrap: word-wrap;
+        vertical-alignment: TextVerticalAlignment.top;
+        // Already in the row's description.
+        accessible-role: none;
+    }
+
+    if root.focused: FocusRing {
+        width: 100%;
+        height: 100%;
     }
 
     TouchArea {
@@ -560,8 +729,10 @@ component SearchField inherits Rectangle {
                 stroke-width: Theme.picnic ? 2px : 1.2px;
             }
         }
+        // Handles Escape for the input inside it; not a Tab stop of its own.
         FocusScope {
             horizontal-stretch: 1;
+            focus-on-tab-navigation: false;
             key-pressed(event) => {
                 if event.text == Key.Escape && root.text != "" {
                     root.clear();
@@ -620,18 +791,44 @@ component SearchField inherits Rectangle {
     }
 }
 
+// The app table. Up and Down move the focus, Home and End go to the ends, Right and Left (or
+// Enter and Space) expand and fold apps; the model does the moving (`View::press`).
 component Table {
     in property <[Row]> rows;
-    in-out property <string> selected;
+    // The focused row, -1 for none.
+    in property <int> current;
+    callback pick(int);
+    callback key(TableKey);
     // The sorted column (0 for RAM in use) and its direction.
     in property <int> sort-column;
     in property <bool> sort-ascending;
     // "Filtered: 5 of 18 apps · …" while searching, else empty.
     in property <string> filtered;
     in-out property <string> search;
-    callback toggle(string);
     callback sort(int);
     callback searched(string);
+    // Focus frames only after a key, as in KDE apps.
+    property <bool> keyboard;
+    property <length> row-height: Theme.picnic ? 31px : 28px;
+
+    // Scrolls the focused row into view.
+    function reveal() {
+        if root.current < 0 {
+            return;
+        }
+        if root.current * root.row-height + view.content-y < 0 {
+            view.content-y = -root.current * root.row-height;
+        }
+        if (root.current + 1) * root.row-height + view.content-y > view.visible-height {
+            view.content-y = view.visible-height - (root.current + 1) * root.row-height;
+        }
+    }
+
+    function press(key: TableKey) {
+        root.keyboard = true;
+        root.key(key);
+        root.reveal();
+    }
 
     public function focus-search() {
         field.focus-input();
@@ -754,15 +951,60 @@ component Table {
                 }
             }
         }
-        ListView {
-            for row[i] in root.rows: RowView {
-                entry: row;
-                odd: Math.mod(i, 2) == 1;
-                selected: row.key == root.selected && row.kind == RowKind.app;
-                clicked => {
-                    if row.kind == RowKind.app || row.kind == RowKind.more {
-                        root.selected = row.key;
-                        root.toggle(row.key);
+        // The rows are the scope's only accessible children, so the screen reader's focus follows
+        // the focused row.
+        scope := FocusScope {
+            accessible-role: list;
+            accessible-label: "Apps";
+            accessible-item-count: root.rows.length;
+            accessible-delegate-focus: root.current;
+            focus-gained(reason) => {
+                if reason == FocusReason.tab-navigation {
+                    root.keyboard = true;
+                    if root.current < 0 {
+                        root.key(TableKey.home);
+                    }
+                    root.reveal();
+                }
+            }
+            key-pressed(event) => {
+                if event.modifiers.control || event.modifiers.alt {
+                    return reject;
+                }
+                if event.text == Key.UpArrow {
+                    root.press(TableKey.up);
+                } else if event.text == Key.DownArrow {
+                    root.press(TableKey.down);
+                } else if event.text == Key.Home {
+                    root.press(TableKey.home);
+                } else if event.text == Key.End {
+                    root.press(TableKey.end);
+                } else if event.text == Key.LeftArrow {
+                    root.press(TableKey.left);
+                } else if event.text == Key.RightArrow {
+                    root.press(TableKey.right);
+                } else if event.text == Key.Return || event.text == " " {
+                    root.press(TableKey.toggle);
+                } else {
+                    return reject;
+                }
+                accept
+            }
+            view := ScrollView {
+                content-width: self.visible-width;
+                content-height: rows-layout.preferred-height;
+                rows-layout := VerticalLayout {
+                    width: view.visible-width;
+                    for row[i] in root.rows: RowView {
+                        entry: row;
+                        index: i;
+                        selected: i == root.current;
+                        focused: i == root.current && scope.has-focus && root.keyboard;
+                        clicked => {
+                            root.keyboard = false;
+                            scope.focus();
+                            root.pick(i);
+                        }
                     }
                 }
             }
@@ -778,12 +1020,14 @@ export component MainWindow inherits Window {
     in property <Bar> vram;
     in property <[Tile]> tiles;
     in property <[Row]> rows;
-    in-out property <string> selected;
+    // The focused row, -1 for none.
+    in property <int> current: -1;
     in property <int> sort-column;
     in property <bool> sort-ascending;
     in property <string> filtered;
     in-out property <string> search;
-    callback toggle(string);
+    callback pick(int);
+    callback key(TableKey);
     // A click on a column's header, 0 for RAM in use.
     callback sort-clicked(int);
     // The search field's new text.
@@ -815,6 +1059,8 @@ export component MainWindow inherits Window {
 
     // Ctrl+F finds an app from anywhere in the window; Escape clears the search.
     keys := FocusScope {
+        // Tab goes from the menu button to the search field to the table.
+        focus-on-tab-navigation: false;
         key-pressed(event) => {
             if event.modifiers.control && (event.text == "f" || event.text == "F") {
                 table.focus-search();
@@ -886,11 +1132,14 @@ export component MainWindow inherits Window {
                         padding-right: Theme.picnic ? 3px : 0;
                         table := Table {
                             rows: root.rows;
-                            selected <=> root.selected;
+                            current: root.current;
                             sort-column: root.sort-column;
                             sort-ascending: root.sort-ascending;
-                            toggle(key) => {
-                                root.toggle(key);
+                            pick(index) => {
+                                root.pick(index);
+                            }
+                            key(key) => {
+                                root.key(key);
                             }
                             sort(column) => {
                                 root.sort-clicked(column);
