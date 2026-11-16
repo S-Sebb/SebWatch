@@ -1,10 +1,12 @@
 //! App icons from the desktop's icon theme: an absolute path as is, else the name looked up in
 //! the user's theme (kdeglobals), Breeze, hicolor and pixmaps, else a generic app icon shipped
-//! in the app. Loaded once per name.
+//! in the app. Core's generic service icon also gets the shipped one: themes draw it as a file
+//! type (Breeze: a pale box with "!"), not an app. Loaded once per name.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use sebwatch_core::naming::SERVICE_ICON;
 use slint::Image;
 
 #[derive(Default)]
@@ -31,9 +33,6 @@ fn generic() -> Image {
 }
 
 fn find(icon: &str) -> Option<PathBuf> {
-    if icon.starts_with('/') {
-        return Some(PathBuf::from(icon)).filter(|p| usable(p));
-    }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
@@ -48,8 +47,20 @@ fn find(icon: &str) -> Option<PathBuf> {
         themes.push(theme);
     }
     themes.extend(["breeze".into(), "hicolor".into()]);
-    for theme in &themes {
-        for base in &bases {
+    lookup(icon, &bases, &themes)
+}
+
+/// `icon` in the themes under the bases, in order, then in pixmaps; `None` for core's service
+/// icon, so an app without an icon of its own gets the shipped one.
+fn lookup(icon: &str, bases: &[PathBuf], themes: &[String]) -> Option<PathBuf> {
+    if icon == SERVICE_ICON {
+        return None;
+    }
+    if icon.starts_with('/') {
+        return Some(PathBuf::from(icon)).filter(|p| usable(p));
+    }
+    for theme in themes {
+        for base in bases {
             if let Some(path) = in_theme(&base.join(theme), icon) {
                 return Some(path);
             }
@@ -149,5 +160,17 @@ mod tests {
         assert_eq!(in_theme(&theme, "dark"), None);
         assert_eq!(in_theme(&theme, "game"), None);
         std::fs::remove_dir_all(&theme).unwrap();
+    }
+
+    #[test]
+    fn an_app_without_its_own_icon_gets_the_shipped_one() {
+        // Breeze has the service icon, but as a file type: a pale box with "!".
+        let base = std::env::temp_dir().join(format!("sebwatch-service-{}", std::process::id()));
+        let file = base.join("breeze/mimetypes/32/application-x-executable.svg");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "<svg/>").unwrap();
+        let found = lookup(SERVICE_ICON, &[base.clone()], &["breeze".into()]);
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(found, None);
     }
 }

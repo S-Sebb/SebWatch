@@ -1,6 +1,6 @@
 //! The window drawn offscreen by Slint's software renderer, in each theme, with the Android
-//! emulator's bar segment hovered and its row expanded, plus Breeze Light with the GPU asleep
-//! and with the menu open, and one of this PC's live reading.
+//! emulator's bar segment hovered and its row expanded, then with the NVIDIA GPU asleep, plus
+//! Breeze Light with the menu open, and one of this PC's live reading.
 //! Nothing shows on the screen. Run with `scripts/screenshots <dir>`.
 
 use std::cell::Cell;
@@ -133,15 +133,11 @@ fn screenshots() {
         shot.wait(Duration::from_millis(800));
         shot.save(&shot.render(), &dir.join(format!("app-{name}.png")));
 
+        shot.pointer(4.0, 4.0, false);
+        crate::present(&ui, crate::sample::asleep());
+        shot.save(&shot.render(), &dir.join(format!("app-{name}-asleep.png")));
+
         if choice == ThemeChoice::Light {
-            shot.pointer(4.0, 4.0, false);
-            let asleep = crate::model::Snapshot {
-                vram: None,
-                gpu_asleep: true,
-                ..crate::sample::snapshot()
-            };
-            crate::present(&ui, asleep);
-            shot.save(&shot.render(), &dir.join("app-light-asleep.png"));
             crate::present(&ui, crate::sample::snapshot());
             shot.pointer(1000.0 - 16.0 - 15.0, 14.0 + 15.0, true);
             shot.save(&shot.render(), &dir.join("app-light-menu.png"));

@@ -516,16 +516,22 @@ fn tiles(s: &Snapshot) -> Vec<Tile> {
         unit: format!("of {} cores", s.cpu_cores).into(),
         fraction: s.cpu_used / s.cpu_cores.max(1) as f32,
     }];
+    // A sleeping GPU keeps its tiles, with a dash for the figures not read.
     if let Some(nvidia) = s.nvidia_percent {
+        let (value, nvidia_unit) = if s.gpu_asleep {
+            (NONE.into(), "NVIDIA asleep")
+        } else {
+            (percent(nvidia), "NVIDIA")
+        };
         tiles.push(Tile {
             name: "GPU".into(),
-            value: percent(nvidia).into(),
+            value: value.into(),
             unit: match s.intel_percent {
-                Some(intel) => format!("NVIDIA · {} Intel", percent(intel)),
-                None => "NVIDIA".into(),
+                Some(intel) => format!("{nvidia_unit} · {} Intel", percent(intel)),
+                None => nvidia_unit.into(),
             }
             .into(),
-            fraction: nvidia / 100.0,
+            fraction: if s.gpu_asleep { 0.0 } else { nvidia / 100.0 },
         });
     }
     if let Some((used, total)) = s.vram {
@@ -534,6 +540,13 @@ fn tiles(s: &Snapshot) -> Vec<Tile> {
             value: format!("{:.1}", used as f64 / GB).into(),
             unit: format!("of {:.1} GB", total as f64 / GB).into(),
             fraction: share(used, total),
+        });
+    } else if s.gpu_asleep {
+        tiles.push(Tile {
+            name: "VRAM".into(),
+            value: NONE.into(),
+            unit: "GPU asleep".into(),
+            fraction: 0.0,
         });
     }
     tiles.push(Tile {
@@ -655,14 +668,24 @@ mod tests {
         let sum: f32 = vram.iter().map(|seg| seg.fraction).sum();
         assert!((sum - 1.0).abs() < 1e-4, "VRAM bar sums to {sum}");
 
-        let asleep = Snapshot {
-            vram: None,
-            gpu_asleep: true,
-            ..crate::sample::snapshot()
-        };
-        let bar = View::default().update(asleep).vram.unwrap();
+        let asleep = View::default().update(crate::sample::asleep());
+        let bar = asleep.vram.unwrap();
         assert_eq!(bar.total, "GPU asleep");
         assert_eq!(slint::Model::row_count(&bar.segments), 0);
+        // Both GPU tiles stay, saying so; the table shows no NVIDIA figures.
+        let tiles: Vec<_> = asleep
+            .tiles
+            .iter()
+            .map(|t| (t.name.as_str(), t.value.as_str(), t.unit.as_str()))
+            .collect();
+        assert!(tiles.contains(&("GPU", NONE, "NVIDIA asleep · 3% Intel")));
+        assert!(tiles.contains(&("VRAM", NONE, "GPU asleep")));
+        assert!(
+            asleep
+                .rows
+                .iter()
+                .all(|r| r.gpu.as_str() == NONE && r.vram.as_str() == NONE)
+        );
         let none = Snapshot {
             vram: None,
             nvidia_percent: None,

@@ -248,6 +248,8 @@ component TileView inherits Card {
             padding-top: Theme.picnic ? 0 : 7px;
             padding-bottom: Theme.picnic ? 0 : 9px;
             spacing: 2px;
+            // A tile stretched to line up with the bars keeps its content together.
+            alignment: center;
             Muted {
                 text: root.tile.name;
                 font-size: Theme.small;
@@ -657,11 +659,12 @@ export component MainWindow inherits Window {
                 }
                 Rectangle { }
             }
+            // The tiles share out the bars' height, so both columns end on the same line.
             VerticalLayout {
                 width: 180px;
-                alignment: start;
                 spacing: Theme.picnic ? 14px : 8px;
                 HorizontalLayout {
+                    vertical-stretch: 0;
                     alignment: end;
                     MenuButton {
                         chosen(choice) => {

@@ -91,7 +91,8 @@ pub fn snapshot() -> Snapshot {
             ..app(
                 "Android emulator",
                 "· guide35",
-                "media-optical",
+                // As core names it: no desktop file, so the service icon.
+                sebwatch_core::naming::SERVICE_ICON,
                 b(2.7, G),
                 b(2.9, G),
                 b(26.0, M),
@@ -286,4 +287,18 @@ pub fn snapshot() -> Snapshot {
         gpu_asleep: false,
         disk_per_s: b(9.0, M),
     }
+}
+
+/// The same reading with the NVIDIA GPU asleep, as `live.rs` gives it: the busy figure 0%, and
+/// no VRAM or per-app NVIDIA figures, as reading them would wake it.
+pub fn asleep() -> Snapshot {
+    let mut s = snapshot();
+    s.nvidia_percent = Some(0.0);
+    s.vram = None;
+    s.gpu_asleep = true;
+    for app in &mut s.apps {
+        app.gpu_percent = None;
+        app.vram = None;
+    }
+    s
 }
