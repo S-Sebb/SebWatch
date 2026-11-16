@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Tests Win+Esc headless: a virtual KWin (`--virtual`, which also serves KGlobalAccel) on a private
+# D-Bus session, with a throwaway HOME, so nothing shows on the desktop and its shortcuts stay
+# untouched. scripts/install binds Win+Esc to SebWatch, pressing it (through KGlobalAccel) opens
+# SebWatch, pressing it again raises the same window, and scripts/uninstall gives it back to
+# System Monitor; then the same as an AppImage. One line per check; logs in target/logs/.
+# Usage: scripts/test-win-esc
+set -u
+cd "$(dirname "$0")/.."
+logs=$PWD/target/logs
+mkdir -p "$logs"
+
+if [ "${1:-}" != --inside ]; then
+    for tool in cargo kwin_wayland kbuildsycoca6 dbus-run-session gdbus dbus-monitor; do
+        command -v "$tool" >/dev/null || { echo "MISSING: $tool not found"; exit 1; }
+    done
+    [ -f /usr/share/applications/org.kde.plasma-systemmonitor.desktop ] ||
+        { echo "MISSING: KDE System Monitor (plasma-systemmonitor)"; exit 1; }
+    timeout 1200 cargo build --release -p sebwatch >"$logs/win-esc-build.log" 2>&1 ||
+        { echo "FAIL build (see $logs/win-esc-build.log)"; exit 1; }
+    # A private bus that starts no services: portals started from it would outlive it.
+    bus=$logs/win-esc-bus.conf
+    cat >"$bus" <<'EOF'
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+    home=$(mktemp -d)
+    # The throwaway HOME still builds with the real toolchain.
+    CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup} \
+        timeout 600 dbus-run-session --config-file="$bus" -- "$0" --inside "$home" </dev/null 2>"$logs/win-esc-bus.log"
+    status=$?
+    rm -rf "$home"
+    [ "$status" = 124 ] && echo "FAIL timed out"
+    exit "$status"
+fi
+
+home=$2
+export CARGO_HOME RUSTUP_HOME HOME=$home XDG_CONFIG_HOME=$home/.config XDG_DATA_HOME=$home/.local/share \
+    XDG_CACHE_HOME=$home/.cache XDG_STATE_HOME=$home/.local/state
+# KGlobalAccel starts `Exec=sebwatch` from KWin's PATH, which has to hold the install.
+export PATH=$home/.local/bin:$PATH
+unset DISPLAY APPIMAGE APPDIR
+socket=sebwatch-win-esc-$$
+export WAYLAND_DISPLAY=$socket meta_esc=285212672 # Qt::META | Qt::Key_Escape
+js=$home/js
+mkdir -p "$js"
+
+kbuildsycoca6 >"$logs/win-esc-sycoca.log" 2>&1
+kwin_wayland --virtual --no-lockscreen --socket "$socket" --width 1280 --height 800 \
+    >"$logs/win-esc-kwin.log" 2>&1 &
+kwin=$!
+# Stops the SebWatch windows on the virtual KWin, and only those.
+stop_apps() {
+    for pid in $(pgrep -x sebwatch); do
+        tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -qx "WAYLAND_DISPLAY=$socket" && kill "$pid"
+    done
+}
+cleanup() {
+    stop_apps
+    kill "$kwin" 2>/dev/null
+    wait 2>/dev/null
+}
+trap cleanup EXIT
+for _ in $(seq 50); do
+    gdbus introspect --session --dest org.kde.kglobalaccel --object-path /kglobalaccel >/dev/null 2>&1 && break
+    sleep 0.2
+done
+
+call() { gdbus call --session --dest "$1" --object-path "$2" --method "$3" "${@:4}"; }
+holder() { call org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel.action "$meta_esc"; }
+# Runs a KWin script file.
+kwin_js() {
+    local id
+    id=$(call org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$1" sebwatch-test | tr -dc 0-9)
+    call org.kde.KWin /Scripting/Script"$id" org.kde.kwin.Script.run >/dev/null
+    call org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript sebwatch-test >/dev/null
+}
+# KWin's script output doesn't reach a log, so the list goes out as a D-Bus call's argument.
+cat >"$js/list.js" <<'EOF'
+const s = workspace.windowList().filter(w => w.resourceClass === "sebwatch");
+callDBus("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner",
+    "sebwatch-windows " + s.length + (s.some(w => w === workspace.activeWindow) ? " active" : "")
+    + (s.some(w => w.minimized) ? " minimised" : ""));
+EOF
+cat >"$js/minimise.js" <<'EOF'
+for (const w of workspace.windowList()) if (w.resourceClass === "sebwatch") w.minimized = true;
+EOF
+# Prints "sebwatch-windows <count> [active] [minimised]" for SebWatch's windows.
+windows() {
+    timeout 5 dbus-monitor --session "type='method_call',member='GetNameOwner'" 2>/dev/null |
+        grep -m1 -o 'sebwatch-windows[^"]*' &
+    local monitor=$!
+    sleep 0.3
+    kwin_js "$js/list.js"
+    wait $monitor
+}
+# Waits up to 10 s for the window list to read $1.
+shows() {
+    for _ in $(seq 20); do
+        [ "$(windows)" = "$1" ] && return 0
+        sleep 0.5
+    done
+    echo "windows: $(windows), wanted: $1"
+    return 1
+}
+press() { call org.kde.kglobalaccel /component/sebwatch_desktop org.kde.kglobalaccel.Component.invokeShortcut _launch; }
+# Every SebWatch running is on the virtual KWin; prints how many there are.
+on_virtual_kwin() {
+    local n=0
+    for pid in $(pgrep -x sebwatch); do
+        tr '\0' '\n' <"/proc/$pid/environ" | grep -qx "WAYLAND_DISPLAY=$socket" || { echo "$pid is elsewhere"; return 1; }
+        n=$((n + 1))
+    done
+    echo "$n"
+}
+export -f call holder kwin_js windows shows press on_virtual_kwin
+export js socket
+
+status=0
+check() { # name timeout command...
+    local name=$1 limit=$2; shift 2
+    if timeout "$limit" bash -c '"$@"' _ "$@" >"$logs/win-esc-$name.log" 2>&1; then
+        echo "PASS $name"
+    else
+        echo "FAIL $name (see $logs/win-esc-$name.log)"
+        status=1
+    fi
+}
+
+check system-monitor-first 10 bash -c 'holder | grep -q org.kde.plasma-systemmonitor.desktop'
+# KGlobalAccel loads the apps' shortcuts a few seconds after it is on the bus; a binding made
+# before then is lost.
+sleep 4
+check install 1200 scripts/install
+check bound 10 bash -c 'holder; holder | grep -q sebwatch.desktop'
+check press-opens 20 bash -c 'press && shows "sebwatch-windows 1 active" && [ "$(on_virtual_kwin)" = 1 ]'
+check press-again-raises 20 bash -c 'kwin_js "$js/minimise.js" && shows "sebwatch-windows 1 minimised" &&
+    press && shows "sebwatch-windows 1 active" && sleep 1 && [ "$(on_virtual_kwin)" = 1 ]'
+stop_apps
+check uninstall 60 scripts/uninstall
+check given-back 10 bash -c 'holder | grep -q org.kde.plasma-systemmonitor.desktop'
+# As if from an AppImage mounted at $js/appdir: binding adds a launcher entry pointing at the
+# AppImage, unbinding removes it and gives Win+Esc back.
+check appimage 30 bash -c 'set -e
+    mkdir -p "$js/appdir/usr/bin" "$js/appdir/usr/share/icons/hicolor/256x256/apps"
+    cp target/release/sebwatch "$js/appdir/usr/bin/"
+    cp art/icons/hicolor/256x256/apps/sebwatch.png "$js/appdir/usr/share/icons/hicolor/256x256/apps/"
+    run() { APPIMAGE=/opt/SebWatch.AppImage APPDIR="$js/appdir" "$js/appdir/usr/bin/sebwatch" "$@"; }
+    run --bind-win-esc
+    grep -qx "Exec=\"/opt/SebWatch.AppImage\"" "$XDG_DATA_HOME/applications/sebwatch.desktop"
+    [ -f "$XDG_DATA_HOME/icons/hicolor/256x256/apps/sebwatch.png" ]
+    holder | grep -q sebwatch.desktop
+    run --unbind-win-esc
+    [ ! -e "$XDG_DATA_HOME/applications/sebwatch.desktop" ]
+    holder | grep -q org.kde.plasma-systemmonitor.desktop'
+exit $status
