@@ -31,7 +31,8 @@ parent's group, so a build an agent starts is charged to that agent.
   the program it runs instead: the full name of its main process (the command may be a wrapper
   script), else the command's first word after `setsid`/`env`/`nohup`, as a cleaned base name.
   T3 Code runs each coding agent as such a unit inside `app-t3code-agents-<id>.slice`; those
-  are "<Program> agents" (`Claude agents`) with the terminal icon, and the row's detail counts
+  are "<Program> agents" (`Claude agents`; the program capitalised, or its product spelling from a
+  small table in `naming.rs`, such as `OpenCode`) with the terminal icon, and the row's detail counts
   its groups as agents ("13 agents") rather than "groups". Without a desktop file the icon is
   the generic `application-x-executable`, which the window draws as its own gear icon
   (`crates/app/icons/generic-app.svg`). Results are cached per leaf name.

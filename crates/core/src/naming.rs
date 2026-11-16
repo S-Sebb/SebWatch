@@ -133,14 +133,8 @@ impl Naming {
         if !in_agents_slice(group) {
             return generic(program);
         }
-        let mut chars = program.chars();
-        let capital: String = chars
-            .next()
-            .into_iter()
-            .flat_map(char::to_uppercase)
-            .collect();
         AppName {
-            name: format!("{capital}{} agents", chars.as_str()),
+            name: format!("{} agents", product_name(&program)),
             icon: AGENT_ICON.into(),
             agents: true,
         }
@@ -184,6 +178,23 @@ fn command_program(command: &str) -> Option<String> {
                 && !matches!(*word, "setsid" | "env" | "nohup")
         })
         .map(str::to_owned)
+}
+
+/// Programs whose product name isn't the program name with a capital first letter.
+const PRODUCT_NAMES: &[(&str, &str)] = &[("opencode", "OpenCode")];
+
+/// `claude` → "Claude", `opencode` → "OpenCode".
+fn product_name(program: &str) -> String {
+    if let Some((_, name)) = PRODUCT_NAMES.iter().find(|(p, _)| *p == program) {
+        return (*name).to_owned();
+    }
+    let mut chars = program.chars();
+    let capital: String = chars
+        .next()
+        .into_iter()
+        .flat_map(char::to_uppercase)
+        .collect();
+    capital + chars.as_str()
 }
 
 /// T3 Code puts each agent's unit in `app-t3code-agents-<id>.slice`.
@@ -478,7 +489,7 @@ mod tests {
         );
         assert_eq!(
             naming.name(format!("{agents}/t3code-opencode-116db5a8.scope"), None),
-            &agent("Opencode agents")
+            &agent("OpenCode agents")
         );
         // Outside an agents slice: the program's name, launchers skipped.
         assert_eq!(
