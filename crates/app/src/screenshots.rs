@@ -554,10 +554,8 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("select-process-{name}.png")),
         );
-        // To the table: menu button, tiles, search field, End, Kill, Pause, headers, rows.
-        for _ in 0..8 {
-            shot.tap(Key::Tab);
-        }
+        // The rows are the last Tab stop: one Backtab reaches them, however many stops come first.
+        shot.tap(Key::Backtab);
         shot.tap(Key::Menu);
         shot.save(&shot.render(), &dir.join(format!("select-menu-{name}.png")));
         shot.tap(Key::Escape);
