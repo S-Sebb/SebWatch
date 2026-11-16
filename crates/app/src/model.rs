@@ -126,7 +126,8 @@ pub struct Part {
     pub ram: Option<u64>,
     pub swap: Option<u64>,
     pub cpu: f32,
-    /// Known per group, not per process.
+    /// Known per group, not per process: `None` for a process, or a group whose `io.stat`
+    /// can't be read.
     pub disk_per_s: Option<u64>,
 }
 
@@ -677,7 +678,10 @@ impl View {
                 ram: part.ram.map_or(NONE.into(), bytes).into(),
                 swap: part.swap.map_or(NONE.into(), bytes).into(),
                 cpu: cores(part.cpu).into(),
-                disk: part.disk_per_s.map_or(NONE.into(), rate).into(),
+                disk: part
+                    .disk_per_s
+                    .map_or(if part.group { NA } else { NONE }.into(), rate)
+                    .into(),
                 ..empty_row()
             });
         }
@@ -1716,7 +1720,23 @@ mod tests {
     fn failed_readings_say_unavailable_and_zero_stays_zero() {
         let mut s = crate::sample::unavailable();
         s.cpu_used = None;
-        let shown = View::default().update(s);
+        // The emulator expanded, with a group whose `io.stat` failed beside its processes.
+        let emulator = &mut s.apps[1];
+        emulator.parts.insert(
+            0,
+            Part {
+                group: true,
+                name: "app-guide35.scope".into(),
+                detail: String::new(),
+                ram: Some(1),
+                swap: Some(1),
+                cpu: 0.0,
+                disk_per_s: None,
+            },
+        );
+        let mut view = View::default();
+        view.toggle(&emulator.key.clone());
+        let shown = view.update(s);
         let tiles = tile_texts(&shown);
         let t = |name: &str, unit: &str| (name.to_string(), unit.to_string(), false);
         assert_eq!(
@@ -1741,6 +1761,13 @@ mod tests {
             apps.iter()
                 .all(|r| r.disk == NA && r.gpu == NA && r.vram == NA)
         );
+        let disk = |name: &str| {
+            let row = shown.rows.iter().find(|r| r.name == name).unwrap();
+            row.disk.to_string()
+        };
+        // A group's disk failed; a process's never applies (known per group only).
+        assert_eq!(disk("app-guide35.scope"), NA);
+        assert_eq!(disk("qemu-system-x86_64"), NONE);
 
         // A reading that worked: zero is "0", a figure that doesn't apply "—".
         let shown = View::default().update(crate::sample::snapshot());

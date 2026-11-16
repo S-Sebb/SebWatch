@@ -47,7 +47,7 @@ fn app(
     }
 }
 
-fn part(name: &str, pid: u32, ram: u64, swap: u64, cpu: f32, disk: u64) -> Part {
+fn part(name: &str, pid: u32, ram: u64, swap: u64, cpu: f32) -> Part {
     Part {
         group: false,
         name: name.into(),
@@ -55,7 +55,8 @@ fn part(name: &str, pid: u32, ram: u64, swap: u64, cpu: f32, disk: u64) -> Part 
         ram: Some(ram),
         swap: Some(swap),
         cpu,
-        disk_per_s: Some(disk),
+        // Known per group only, as in `live`.
+        disk_per_s: None,
     }
 }
 
@@ -74,29 +75,14 @@ pub fn snapshot() -> Snapshot {
         App {
             zswap: Some(b(461.0, M)),
             parts: vec![
-                part(
-                    "qemu-system-x86_64",
-                    4130176,
-                    b(1.5, G),
-                    b(2.6, G),
-                    0.85,
-                    b(1.9, M),
-                ),
-                part("netsimd", 4130291, b(5.8, M), b(4.2, M), 0.01, 0),
-                part(
-                    "crashpad_handler",
-                    4130195,
-                    b(102.0, K),
-                    b(307.0, K),
-                    0.0,
-                    0,
-                ),
+                part("qemu-system-x86_64", 4130176, b(1.5, G), b(2.6, G), 0.85),
+                part("netsimd", 4130291, b(5.8, M), b(4.2, M), 0.01),
+                part("crashpad_handler", 4130195, b(102.0, K), b(307.0, K), 0.0),
                 // Runs as another user: its memory can't be read.
                 Part {
                     ram: None,
                     swap: None,
-                    disk_per_s: None,
-                    ..part("adb", 4130302, 0, 0, 0.0, 0)
+                    ..part("adb", 4130302, 0, 0, 0.0)
                 },
             ],
             unattributed_ram: b(1.2, G),
@@ -363,9 +349,6 @@ pub fn unavailable() -> Snapshot {
         app.gpu_percent = None;
         app.vram = None;
         app.disk_per_s = None;
-        for part in &mut app.parts {
-            part.disk_per_s = None;
-        }
     }
     s
 }

@@ -105,7 +105,7 @@ the cgroup root, the same key the memory numbers use.
 | Disk read | `io.stat` `rbytes`, summed over devices, bytes/s |
 | Disk write | `io.stat` `wbytes`, summed over devices, bytes/s |
 
-- A group with no `io.stat` (io controller not enabled for its subtree) shows no disk use.
+- A group with no `io.stat` (io controller not enabled for its subtree) shows disk "n/a".
 - A group new since the last read shows zero for one refresh: its counters cover its whole
   life, not the interval. A group that vanished is dropped. A counter that went down (a new
   group reusing the path) counts as zero.
