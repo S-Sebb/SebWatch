@@ -291,7 +291,6 @@ pub fn snapshot() -> Snapshot {
         cpu_used: Some(2.6),
         cpu_cores: 16,
         nvidia_percent: Some(0.0),
-        intel_percent: Some(3.0),
         vram: Some((b(0.3, G), b(8.0, G))),
         gpu_asleep: false,
         nvidia_unavailable: false,
