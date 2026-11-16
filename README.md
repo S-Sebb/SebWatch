@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: CPU, GPU, VRAM and disk tiles with their last minute as a graph, RAM, swap and VRAM bars split by app beside them, and the app table with the Android emulator expanded into its processes" />
-  <br /><sub>Breeze Light, with the Android emulator expanded into its processes</sub>
+  <img src="docs/readme/breeze-light.png" alt="SebWatch in Breeze Light: CPU, GPU, VRAM and disk tiles with their last minute as a graph, RAM, swap and VRAM bars split by app beside them, and the app table with the Android emulator selected, ready to End or Kill" />
+  <br /><sub>Breeze Light, with the Android emulator selected</sub>
 </p>
 
 <table>
@@ -41,6 +41,9 @@
   that started it.
 - **Live.** It refreshes every 2 seconds while you look at it and does nothing while minimised.
   Nothing is recorded: the tiles' small graphs keep only the last minute, in memory.
+- **End a stuck app.** Select a row and End it, or Kill it if it won't go. Pause freezes the
+  window while you look. Only your own apps, never anyone else's.
+- **On Win+Esc.** On KDE Plasma it takes over Win+Esc from System Monitor.
 - **No daemon, no root.** Everything comes from files a normal user can read.
 - **At home on KDE Plasma.** Breeze Light and Breeze Dark follow the desktop's light or dark, or
   pick the SebChat theme from the menu.
@@ -50,7 +53,7 @@
 | Needs | Why |
 |---|---|
 | **Linux** with cgroup v2 and a systemd user session | Each app the desktop starts runs in its own group, which is what SebWatch reads |
-| **NVIDIA driver** (optional) | For GPU and VRAM readings; without it the VRAM bar and the GPU and VRAM tiles are hidden, and the table shows — in their columns |
+| **NVIDIA driver** (optional) | For NVIDIA GPU and VRAM readings; without it the VRAM bar and the VRAM tile are hidden, and the table shows — in their columns. Intel and AMD GPUs are read without a driver of their own |
 | **Rust** (stable) and the fontconfig and xkbcommon development packages | Only to build it yourself: `fontconfig-devel libxkbcommon-devel` on Fedora |
 
 Each [release](https://github.com/S-Sebb/SebWatch/releases) has two packages:
@@ -59,13 +62,13 @@ Each [release](https://github.com/S-Sebb/SebWatch/releases) has two packages:
   and remove it with `sudo dnf remove sebwatch`:
 
   ```sh
-  sudo dnf install https://github.com/S-Sebb/SebWatch/releases/download/v0.1.0/sebwatch-0.1.0-1.x86_64.rpm
+  sudo dnf install https://github.com/S-Sebb/SebWatch/releases/download/v0.2.0/sebwatch-0.2.0-1.x86_64.rpm
   ```
 
 - **Any other distribution:** the AppImage. Make it executable and run it:
 
   ```sh
-  chmod +x SebWatch-0.1.0-x86_64.AppImage && ./SebWatch-0.1.0-x86_64.AppImage
+  chmod +x SebWatch-0.2.0-x86_64.AppImage && ./SebWatch-0.2.0-x86_64.AppImage
   ```
 
 Or build it from a checkout:
@@ -86,7 +89,7 @@ Pressing it again while SebWatch is open brings its window to the front. `script
 the AppImage, or to change it by hand:
 
 ```sh
-sebwatch --bind-win-esc      # the AppImage: ./SebWatch-0.1.0-x86_64.AppImage --bind-win-esc
+sebwatch --bind-win-esc      # the AppImage: ./SebWatch-0.2.0-x86_64.AppImage --bind-win-esc
 sebwatch --unbind-win-esc    # before removing it, to give Win+Esc back to System Monitor
 ```
 
