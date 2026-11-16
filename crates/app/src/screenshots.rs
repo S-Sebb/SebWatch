@@ -276,6 +276,28 @@ fn screenshots() {
                 height,
             };
             small.save(&small.render(), &dir.join(format!("{size}-{name}.png")));
+            // The table scrolled sideways (header and rows together), the short page scrolled
+            // down to the table; then back.
+            let (x, y, delta_x, delta_y) = match size {
+                "narrow" => (300.0, 700.0, -300.0, 0.0),
+                "short" => (300.0, 200.0, 0.0, -1000.0),
+                _ => continue,
+            };
+            let scroll = |delta_x: f32, delta_y: f32| {
+                let position = LogicalPosition::new(x, y);
+                window.dispatch_event(WindowEvent::PointerScrolled {
+                    position,
+                    delta_x,
+                    delta_y,
+                });
+                window.dispatch_event(WindowEvent::PointerExited);
+            };
+            scroll(delta_x, delta_y);
+            small.save(
+                &small.render(),
+                &dir.join(format!("{size}-scrolled-{name}.png")),
+            );
+            scroll(-delta_x, -delta_y);
         }
         window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
         window.set_size(PhysicalSize::new(shot.width, shot.height));
