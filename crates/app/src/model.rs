@@ -354,9 +354,10 @@ impl View {
         let mut sorted = self.sort.apply(&s.apps);
         let colour = |app: &App| series.get(app.key.as_str()).map_or(-1, |&c| c as i32);
         // A search lists every app it finds, so none hides in the fold.
-        let listed = match self.searching() {
+        let query = self.searching();
+        let listed = match &query {
             Some(query) => {
-                sorted.retain(|a| matches(a, &query));
+                sorted.retain(|a| matches(a, query));
                 sorted.len()
             }
             None => sorted.len().min(LISTED),
@@ -381,7 +382,13 @@ impl View {
                 }
             }
         }
-        self.closed_rows(&mut rows, &s.closed);
+        let found = |query: &str| {
+            let found = |text: &str| text.to_lowercase().contains(query);
+            found(CLOSED_APPS) || s.closed.exited.iter().any(|e| found(&e.name))
+        };
+        if query.as_deref().is_none_or(found) {
+            self.closed_rows(&mut rows, &s.closed);
+        }
         rows
     }
 
@@ -1143,21 +1150,31 @@ mod tests {
             let names: Vec<String> = shown.rows.iter().map(|r| r.name.to_string()).collect();
             (names, shown.filtered)
         };
-        // Konsole, Akonadi and Kate sit in the fold: found, they show without it.
+        // Konsole, Akonadi and Kate sit in the fold: found, they show without it. Okular has
+        // exited, so its memory is found under Closed apps.
         let (found, note) = find(&mut view, "K");
         assert_eq!(
             found,
-            ["Plasma Workspace", "KWin", "Konsole", "Akonadi", "Kate"]
+            [
+                "Plasma Workspace",
+                "KWin",
+                "Konsole",
+                "Akonadi",
+                "Kate",
+                "Closed apps (cache)"
+            ]
         );
         assert_eq!(
             note,
             "Filtered: 5 of 18 apps · the bars show the whole system"
         );
         assert_eq!(find(&mut view, "guide35.service").0, ["Android emulator"]);
+        assert_eq!(find(&mut view, "firefox").0, ["Closed apps (cache)"]);
         assert_eq!(find(&mut view, " 4130291 ").0, ["Android emulator"]);
         // A PID is matched whole, not by its digits.
         assert!(find(&mut view, "413029").0.is_empty());
-        assert_eq!(find(&mut view, "").0.len(), LISTED + 1);
+        // Cleared: the listed apps, the fold and Closed apps.
+        assert_eq!(find(&mut view, "").0.len(), LISTED + 2);
         // The bars don't change with the search.
         view.search = "kate".into();
         let shown = view.render();
