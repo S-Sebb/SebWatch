@@ -69,7 +69,8 @@ menu button sits in the bars card's top-right corner, after Memory's total.
 
 **Small windows** (#36). The window is at least 760 × 480 and remembers its size in the
 settings file (not when maximised or full screen). A narrow window keeps the name column at
-220 px and scrolls the table sideways, header and rows together. A short one keeps about 8
+220 px and in view, while the value columns, header and rows together, scroll sideways under it
+(a shadow on its edge while scrolled; the scrollbar runs under the values only). A short one keeps about 8
 table rows and scrolls the whole page instead.
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.

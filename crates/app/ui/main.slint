@@ -1125,6 +1125,11 @@ component RowView inherits Rectangle {
     // The focused remainder row holds its explanation as a second line, below the figures.
     property <bool> show-tip: self.focused && self.entry.tip != "";
     property <length> line: Theme.picnic ? 31px : 28px;
+    // Where the list shows the row: from `pin` (its sideways scroll), `visible-width` wide.
+    in property <length> pin;
+    in property <length> visible-width;
+    // The name column with the row's left padding; the values and the right padding take the rest.
+    property <length> name-width: self.width - Columns.total - 8px;
     height: self.show-tip ? self.line + tip.preferred-height + 6px : self.line;
     background: self.selected ? Theme.selection : Math.mod(self.index, 2) == 1 && !Theme.picnic ? Theme.alt : transparent;
     accessible-role: list-item;
@@ -1146,60 +1151,13 @@ component RowView inherits Rectangle {
         }
     }
 
-    if Theme.picnic: Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
-        background: Theme.line;
-    }
-
-    HorizontalLayout {
+    // The values, right of the name column.
+    values := HorizontalLayout {
+        x: root.name-width;
         y: 0;
+        width: root.width - root.name-width;
         height: root.line;
-        padding-left: 8px;
         padding-right: 8px;
-        HorizontalLayout {
-            horizontal-stretch: 1;
-            spacing: 6px;
-            padding-left: root.top ? 0 : 74px + (root.entry.depth - 1) * 16px;
-            if root.top: VerticalLayout {
-                alignment: center;
-                Chevron {
-                    open: root.entry.expanded;
-                }
-            }
-            if root.top: VerticalLayout {
-                alignment: center;
-                Swatch {
-                    kind: SegmentKind.app;
-                    series: root.entry.series;
-                    opacity: root.entry.series >= 0 ? 1 : 0;
-                }
-            }
-            if root.top: VerticalLayout {
-                alignment: center;
-                Image {
-                    width: 22px;
-                    height: 22px;
-                    source: root.entry.icon;
-                }
-            }
-            HorizontalLayout {
-                spacing: 4px;
-                alignment: start;
-                Label {
-                    text: root.entry.name;
-                    font-size: root.small;
-                    color: root.entry.kind == RowKind.kernel || root.entry.kind == RowKind.more ? root.muted : Theme.fg;
-                    font-weight: root.entry.kind == RowKind.group ? (Theme.picnic ? 800 : 700) : Theme.weight;
-                    overflow: elide;
-                }
-                Muted {
-                    text: root.entry.detail;
-                    color: root.muted;
-                    font-size: root.small;
-                }
-            }
-        }
         Cell {
             column: 0;
             muted: root.muted;
@@ -1251,10 +1209,78 @@ component RowView inherits Rectangle {
         }
     }
 
+    // The name column stays in view while the values scroll sideways under it, opaque only
+    // then: unscrolled, the card's corners and frame show through as before.
+    Rectangle {
+        x: root.pin;
+        y: 0;
+        width: root.name-width;
+        height: root.line;
+        background: root.pin > 0 ? Theme.view : transparent;
+        clip: true;
+        if root.pin > 0: Rectangle {
+            background: root.background;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            padding-left: 8px + (root.top ? 0 : 74px + (root.entry.depth - 1) * 16px);
+            if root.top: VerticalLayout {
+                alignment: center;
+                Chevron {
+                    open: root.entry.expanded;
+                }
+            }
+            if root.top: VerticalLayout {
+                alignment: center;
+                Swatch {
+                    kind: SegmentKind.app;
+                    series: root.entry.series;
+                    opacity: root.entry.series >= 0 ? 1 : 0;
+                }
+            }
+            if root.top: VerticalLayout {
+                alignment: center;
+                Image {
+                    width: 22px;
+                    height: 22px;
+                    source: root.entry.icon;
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                Label {
+                    text: root.entry.name;
+                    font-size: root.small;
+                    color: root.entry.kind == RowKind.kernel || root.entry.kind == RowKind.more ? root.muted : Theme.fg;
+                    font-weight: root.entry.kind == RowKind.group ? (Theme.picnic ? 800 : 700) : Theme.weight;
+                    overflow: elide;
+                    // The detail gives way first; a long name still elides.
+                    min-width: min(self.preferred-width, 120px);
+                }
+                Muted {
+                    text: root.entry.detail;
+                    color: root.muted;
+                    font-size: root.small;
+                    overflow: elide;
+                    min-width: 0;
+                    // A lone "…" after an elided name says nothing.
+                    visible: self.width >= 24px;
+                }
+            }
+        }
+    }
+
+    if Theme.picnic: Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+
     tip := Label {
-        x: 8px + 74px;
+        x: root.pin + 8px + 74px;
         y: root.line - 2px;
-        width: root.width - self.x - 16px;
+        width: root.visible-width - 8px - 74px - 16px;
         visible: root.show-tip;
         text: root.show-tip ? root.entry.tip : "";
         font-size: Theme.small;
@@ -1266,7 +1292,8 @@ component RowView inherits Rectangle {
     }
 
     if root.focused: FocusRing {
-        width: 100%;
+        x: root.pin;
+        width: root.visible-width;
         height: 100%;
     }
 
@@ -1278,7 +1305,7 @@ component RowView inherits Rectangle {
 
     // Over the Intel or AMD cell, above the row's touch area so it gets the hover.
     if root.entry.igpu-tip != "": Rectangle {
-        x: igpu-cell.x;
+        x: values.x + igpu-cell.x;
         y: 0;
         width: igpu-cell.width;
         height: root.line;
@@ -1407,6 +1434,28 @@ component SearchField inherits Rectangle {
     }
 }
 
+// The name column's right edge while the values scroll sideways: a line, with a shadow over
+// the values once they have scrolled under it.
+component NameEdge {
+    in property <bool> scrolled;
+    width: 0;
+    Rectangle {
+        x: -self.width;
+        width: Theme.picnic ? 2px : 1px;
+        background: Theme.line;
+    }
+    if root.scrolled && Theme.picnic: Rectangle {
+        x: 0;
+        width: 3px;
+        background: #E9C9A5;
+    }
+    if root.scrolled && !Theme.picnic: Rectangle {
+        x: 0;
+        width: 7px;
+        background: @linear-gradient(90deg, (Theme.dark ? #00000088 : #00000038) 0%, transparent 100%);
+    }
+}
+
 // The app table. Up and Down move the focus, Home and End go to the ends, Right and Left (or
 // Enter and Space) expand and fold apps; the model does the moving (`View::press`).
 component Table {
@@ -1432,7 +1481,7 @@ component Table {
     // Below the header, under the name's left end or a figure's right end.
     out property <KeyTip> tip: {
         shown: header.has-focus,
-        x: header.absolute-position.x + view.content-x + (self.column == 0 ? 0 : self.content-width - Columns.tails[self.column]),
+        x: header.absolute-position.x + (self.column == 0 ? 0 : view.content-x + self.content-width - Columns.tails[self.column]),
         y: header.absolute-position.y + header.height + 4px,
         right: self.column != 0,
         title: self.column == 0 ? "Name" : Columns.titles[self.column - 1],
@@ -1465,6 +1514,14 @@ component Table {
         if root.column > 0 && Columns.widths[root.column - 1] == 0 {
             root.column += by;
         }
+        root.reveal-column();
+    }
+
+    // Scrolls the keyboard's column out from under the name column, or in from the right.
+    function reveal-column() {
+        if root.column > 0 {
+            view.content-x = max(Columns.tails[root.column - 1] - Columns.total, min(view.content-x, root.width - root.content-width + Columns.tails[root.column]));
+        }
     }
 
     public function focus-search() {
@@ -1478,6 +1535,10 @@ component Table {
     property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", Columns.igpu + " GPU", Columns.igpu == "" ? "GPU" : "NVIDIA GPU", "VRAM"];
     // The name column keeps 220 px; a narrower window scrolls the table sideways.
     property <length> content-width: max(self.width, 220px + Columns.total + 16px);
+    // The name column, with the rows' left padding. It stays put while the values scroll under it.
+    property <length> name-width: self.content-width - Columns.total - 8px;
+    property <bool> overflows: self.width < self.content-width;
+    property <bool> scrolled: view.content-x < 0;
 
     VerticalLayout {
         // The search line above the table, as in KDE System Monitor; SebChat titles it "Apps".
@@ -1533,6 +1594,9 @@ component Table {
             accessible-label: "Columns";
             accessible-item-count: Columns.titles.length + 1;
             accessible-delegate-focus: root.column;
+            focus-gained => {
+                root.reveal-column();
+            }
             key-pressed(event) => {
                 if event.modifiers.control || event.modifiers.alt {
                     return reject;
@@ -1545,6 +1609,7 @@ component Table {
                     root.column = 0;
                 } else if event.text == Key.End {
                     root.column = Columns.titles.length;
+                    root.reveal-column();
                 } else if event.text == Key.Return || event.text == " " {
                     if root.column > 0 {
                         root.sort(root.column - 1);
@@ -1568,18 +1633,11 @@ component Table {
                     height: Theme.picnic ? 3px : 1px;
                     background: Theme.line;
                 }
-                // Scrolls sideways with the rows.
+                // Scrolls sideways with the rows. Its columns end 8 px right of the rows' cells, so
+                // the titles, padded 8 px, end where the figures do.
                 HorizontalLayout {
-                    x: view.content-x;
-                    width: root.content-width;
-                    HeaderCell {
-                        horizontal-stretch: 1;
-                        name: true;
-                        title: "Name";
-                        about: Columns.name-about;
-                        index: 0;
-                        focused: header.has-focus && root.column == 0;
-                    }
+                    x: view.content-x + root.content-width - Columns.total;
+                    width: Columns.total;
                     for title[i] in Columns.titles: HeaderCell {
                         width: Columns.widths[i];
                         visible: self.width > 0;
@@ -1593,6 +1651,28 @@ component Table {
                             root.sort(i);
                         }
                     }
+                }
+                // Stays put over the figures, opaque between the header's lines once they scroll.
+                if root.scrolled: Rectangle {
+                    x: 0;
+                    y: Theme.picnic ? 0 : 1px;
+                    width: root.name-width;
+                    height: parent.height - self.y - (Theme.picnic ? 3px : 1px);
+                    background: Theme.view;
+                }
+                HeaderCell {
+                    x: 0;
+                    width: root.content-width - Columns.total;
+                    name: true;
+                    title: "Name";
+                    about: Columns.name-about;
+                    index: 0;
+                    focused: header.has-focus && root.column == 0;
+                }
+                NameEdge {
+                    x: root.name-width;
+                    visible: root.overflows;
+                    scrolled: root.scrolled;
                 }
             }
         }
@@ -1669,8 +1749,12 @@ component Table {
             view := ListView {
                 accessible-role: none;
                 content-width: root.content-width;
+                // Its own bar would run under the name column too; `values-bar` runs under the values only.
+                horizontal-scrollbar-policy: always-off;
                 for row[i] in root.rows: RowView {
                     width: root.content-width;
+                    pin: -view.content-x;
+                    visible-width: view.visible-width;
                     entry: row;
                     index: i;
                     selected: i == root.current;
@@ -1681,6 +1765,26 @@ component Table {
                         root.pick(i);
                     }
                 }
+            }
+            NameEdge {
+                x: root.name-width;
+                height: min(parent.height, root.rows.length * root.row-height + view.content-y);
+                visible: root.overflows;
+                scrolled: root.scrolled;
+            }
+            // Shares the list's sideways scroll; as wide as the values that scroll, less the
+            // vertical bar's corner.
+            values-bar := ScrollView {
+                x: root.name-width;
+                y: parent.height - self.height;
+                width: parent.width - root.name-width - 14px;
+                height: 14px;
+                min-height: 0;
+                visible: root.overflows;
+                vertical-scrollbar-policy: always-off;
+                content-width: self.width + root.content-width - view.visible-width;
+                content-height: self.height;
+                content-x <=> view.content-x;
             }
         }
     }

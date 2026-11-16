@@ -444,6 +444,30 @@ fn screenshots() {
             &shot.render(),
             &dir.join(format!("focus-header-intel-{name}.png")),
         );
+        // #56: in the narrowest window, End scrolls VRAM in from the right; Home, then Right,
+        // brings RAM in use back out from under the fixed name column.
+        window.set_size(PhysicalSize::new(760, height));
+        let narrow = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width: 760,
+            height,
+        };
+        narrow.tap(Key::End);
+        narrow.save(
+            &narrow.render(),
+            &dir.join(format!("focus-header-narrow-end-{name}.png")),
+        );
+        narrow.tap(Key::Home);
+        narrow.tap(Key::RightArrow);
+        narrow.save(
+            &narrow.render(),
+            &dir.join(format!("focus-header-narrow-ram-{name}.png")),
+        );
+        window.set_size(PhysicalSize::new(shot.width, shot.height));
+        for _ in 0..5 {
+            shot.tap(Key::RightArrow);
+        }
         shot.tap(Key::LeftArrow);
         shot.tap(Key::Return);
         assert_eq!(ui.get_sort_column(), 4);
