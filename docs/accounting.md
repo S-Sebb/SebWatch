@@ -115,8 +115,18 @@ the cgroup root, the same key the memory numbers use.
 - **NVIDIA** (`crates/core/src/nvidia.rs`): first the dGPU's runtime PM status
   (`/sys/bus/pci/devices/<addr>/power/runtime_status`); `suspended` shows "asleep" and NVML is
   not loaded, so the GPU stays asleep. Otherwise `libnvidia-ml.so.1` is loaded at runtime and
-  NVML is initialised, read and shut down every refresh (an open session would keep the GPU
-  awake). No NVIDIA GPU, no library or a failed init: no NVIDIA section.
+  NVML is initialised, read and shut down (an open session would keep the GPU awake). No NVIDIA
+  GPU, no library or a failed init: no NVIDIA section.
+
+  NVML is read every refresh (2 s) while the last reading showed use: utilisation above 0%, or
+  an app with VRAM or GPU %. When it showed the GPU idle, NVML is read only every 10 s and the
+  refreshes in between show that last reading. Each NVML start talks to the driver and may
+  restart its idle timer, so reads every 2 s could keep an idle dGPU from ever reaching runtime
+  suspend; 10 s leaves it room to. Not measured (#23): on Seb's PC other apps and an HDMI monitor
+  on the dGPU keep it awake anyway; `scripts/dgpu-sleep` measures it on a PC where nothing else
+  holds the dGPU. Between those reads the sysfs status isn't checked either, so an idle GPU shows
+  "asleep", or an app starting on it shows up, up to 10 s late. An asleep GPU is still checked
+  every refresh: that reads only sysfs.
 
   | Column | Source |
   |---|---|

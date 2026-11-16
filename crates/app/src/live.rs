@@ -22,6 +22,8 @@ pub struct Reader {
     cores: u32,
     /// Memory can be split by app here (`memory::splits_by_app`).
     split: bool,
+    /// The last NVIDIA reading and when it was taken, reused while the next NVML read isn't due.
+    gpu: Option<(Instant, Nvidia)>,
 }
 
 /// The NVIDIA GPU as read this refresh.
@@ -32,8 +34,26 @@ struct GpuReading {
     unavailable: bool,
 }
 
-fn read_gpu(interval: Duration) -> GpuReading {
-    let (gpu, asleep, unavailable) = match nvidia::read(interval) {
+/// How often NVML is read while the dGPU sits idle. Every read starts NVML, which may restart the
+/// driver's idle timer; reading less often gives an idle dGPU its chance to runtime-suspend.
+const IDLE_NVML_REFRESH: Duration = Duration::from_secs(10);
+
+/// Whether NVML is read again, `since` the `last` reading: at once unless that reading found the
+/// GPU awake and idle (0%, no process using memory or the GPU), then after `IDLE_NVML_REFRESH`.
+/// An asleep GPU is checked every refresh, which reads only sysfs.
+fn nvml_due(last: &Nvidia, since: Duration) -> bool {
+    let idle = |gpu: &nvidia::Gpu| {
+        gpu.utilization_percent.unwrap_or(0) == 0
+            && gpu
+                .apps
+                .values()
+                .all(|a| a.vram_bytes == 0 && a.sm_percent == 0.0)
+    };
+    !matches!(last, Nvidia::Awake(gpu) if idle(gpu)) || since >= IDLE_NVML_REFRESH
+}
+
+fn gpu_reading(nvidia: Option<Nvidia>) -> GpuReading {
+    let (gpu, asleep, unavailable) = match nvidia {
         Some(Nvidia::Awake(gpu)) => (Some(gpu), false, false),
         Some(Nvidia::Asleep) => (None, true, false),
         Some(Nvidia::NotAnswering) => (None, false, true),
@@ -68,7 +88,22 @@ impl Reader {
             drills: HashMap::new(),
             cores: std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
             split: memory::splits_by_app(Path::new(CGROUP_ROOT)),
+            gpu: None,
         }
+    }
+
+    /// The NVIDIA GPU this refresh: read anew when due (`nvml_due`), else the last reading.
+    fn read_gpu(&mut self, interval: Duration) -> GpuReading {
+        let now = Instant::now();
+        let nvidia = match &self.gpu {
+            Some((at, last)) if !nvml_due(last, now - *at) => Some(last.clone()),
+            _ => {
+                let nvidia = nvidia::read(interval);
+                self.gpu = nvidia.clone().map(|n| (now, n));
+                nvidia
+            }
+        };
+        gpu_reading(nvidia)
     }
 
     /// CPU and disk rates of `groups` since the last call, and the whole CPU and disk use: None
@@ -106,7 +141,7 @@ impl Reader {
             gpu,
             asleep,
             unavailable,
-        } = read_gpu(interval);
+        } = self.read_gpu(interval);
 
         let rate = |group: &PathBuf| rates.get(group).copied().unwrap_or_default();
         // Processes are read only for expanded apps; one that folds up forgets its last sample.
@@ -242,7 +277,7 @@ impl Reader {
             gpu,
             asleep,
             unavailable,
-        } = read_gpu(interval);
+        } = self.read_gpu(interval);
         let (swap_total, swap_free) = swap();
         Ok(Snapshot {
             taken,
@@ -344,7 +379,38 @@ fn swap() -> (u64, u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::sum_known;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use sebwatch_core::nvidia::{AppUsage, Gpu, Nvidia};
+
+    use super::{nvml_due, sum_known};
+
+    #[test]
+    fn an_idle_gpu_is_read_every_10_s_and_a_used_or_asleep_one_every_refresh() {
+        let gpu = |percent, vram_bytes| {
+            Nvidia::Awake(Gpu {
+                vram_used_bytes: 0,
+                vram_total_bytes: 8 << 30,
+                utilization_percent: Some(percent),
+                apps: BTreeMap::from([(
+                    PathBuf::from("app.slice/a.scope"),
+                    AppUsage {
+                        vram_bytes,
+                        sm_percent: 0.0,
+                    },
+                )]),
+            })
+        };
+        let (soon, later) = (Duration::from_secs(2), Duration::from_secs(10));
+        assert!(!nvml_due(&gpu(0, 0), soon));
+        assert!(nvml_due(&gpu(0, 0), later));
+        assert!(nvml_due(&gpu(3, 0), soon));
+        assert!(nvml_due(&gpu(0, 1 << 20), soon));
+        assert!(nvml_due(&Nvidia::Asleep, soon));
+        assert!(nvml_due(&Nvidia::NotAnswering, soon));
+    }
 
     #[test]
     fn disk_sums_the_groups_that_have_it_and_is_unknown_when_none_do() {
