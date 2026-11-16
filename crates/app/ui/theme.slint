@@ -37,9 +37,10 @@ export global Theme {
     out property <color> hover: self.picnic ? #FDE0E6 : self.dark ? #3daee926 : #3daee91f;
     out property <color> outline: #5B331C;
 
-    // Bar segments: the five apps' series colours, then the fixed parts, each with its ink.
-    out property <[color]> series: self.dark ? [#3987e5, #d95926, #199e70, #c98500, #d55181] : [#2a78d6, #eb6834, #1baf7a, #eda100, #e87ba4];
-    out property <[color]> series-ink: self.picnic ? [#ffffff, #4A2F22, #4A2F22, #4A2F22, #4A2F22] : self.dark ? [#232629, #232629, #232629, #232629, #ffffff] : [#ffffff, #232629, #232629, #232629, #232629];
+    // Bar segments: the apps' series colours (five for RAM's top five, two more so the swap and
+    // VRAM bars' own top apps keep one colour in every bar), then the fixed parts, each with its ink.
+    out property <[color]> series: self.dark ? [#3987e5, #d95926, #199e70, #c98500, #d55181, #9474d8, #2aa7c0] : [#2a78d6, #eb6834, #1baf7a, #eda100, #e87ba4, #8a63d2, #1d9cb5];
+    out property <[color]> series-ink: self.picnic ? [#ffffff, #4A2F22, #4A2F22, #4A2F22, #4A2F22, #ffffff, #ffffff] : self.dark ? [#232629, #232629, #232629, #232629, #ffffff, #232629, #232629] : [#ffffff, #232629, #232629, #232629, #232629, #ffffff, #ffffff];
     out property <color> other: self.picnic ? #C9AD8E : self.dark ? #6b737b : #a7adb3;
     out property <color> other-ink: self.fg;
     out property <color> zswap: self.picnic ? #8A6A55 : self.dark ? #959ea8 : #5d6670;
@@ -267,6 +268,8 @@ export component Card {
 // The expand arrow: a thin Breeze chevron, or a pixel triangle in SebChat.
 export component Chevron {
     in property <bool> open;
+    // Points up: a column sorted smallest first.
+    in property <bool> up;
     in property <color> color: Theme.picnic ? Theme.fg : Theme.muted;
     width: 16px;
     height: 16px;
@@ -275,7 +278,7 @@ export component Chevron {
         height: 16px;
         viewbox-width: 16;
         viewbox-height: 16;
-        commands: root.open ? "M 4 6 L 8 10 L 12 6" : "M 6 4 L 10 8 L 6 12";
+        commands: root.up ? "M 4 10 L 8 6 L 12 10" : root.open ? "M 4 6 L 8 10 L 12 6" : "M 6 4 L 10 8 L 6 12";
         stroke: root.color;
         stroke-width: 1px;
     }
@@ -284,10 +287,10 @@ export component Chevron {
         width: 10px;
         height: 10px;
         for r in 3: Rectangle {
-            x: root.open ? r * 2px : (r + 1) * 2px;
-            y: root.open ? (r + 1) * 2px : r * 2px;
-            width: root.open ? (5 - 2 * r) * 2px : 2px;
-            height: root.open ? 2px : (5 - 2 * r) * 2px;
+            x: root.open || root.up ? r * 2px : (r + 1) * 2px;
+            y: root.up ? (3 - r) * 2px : root.open ? (r + 1) * 2px : r * 2px;
+            width: root.open || root.up ? (5 - 2 * r) * 2px : 2px;
+            height: root.open || root.up ? 2px : (5 - 2 * r) * 2px;
             background: root.color;
         }
     }

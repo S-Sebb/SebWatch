@@ -128,17 +128,21 @@ the cgroup root, the same key the memory numbers use.
 
 - **RAM bar**: the five biggest apps in their own colours, then Other apps (the rest's RAM in
   use), Zswap pool, File cache (every app's file cache), Kernel and drivers and Free; the
-  shares add up to `MemTotal`. A colour stays with its app while it is in the top five.
-- **Closed apps (cache)** is a row like any app, sorted by its RAM in use: its RAM counts in
-  Other apps unless it is in the top five, its cache in File cache. It has no processes, so
-  expanded it shows only "Kernel memory and zswap (not per process)".
-- **Swap bar**: the same five apps' swap, Other apps, and free swap (`SwapTotal` minus every
+  shares add up to `MemTotal`.
+- **Closed apps (cache)** is a row like any app, sorted with them: its RAM counts in Other apps
+  unless it is in the top five, its cache in File cache. It has no processes, so expanded it
+  shows only "Kernel memory and zswap (not per process)".
+- **Swap bar**: the five biggest apps by swap, Other apps, and free swap (`SwapTotal` minus every
   app's swap).
-- **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the same five apps' VRAM (each app's
+- **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the five biggest apps by VRAM (each app's
   processes summed over its groups), Other apps, Driver and other (used VRAM minus every app's:
   the driver, contexts and processes NVML doesn't list) and Free (total minus used). Apps without
   VRAM are left out. A sleeping GPU isn't read, so its bar shows empty with "GPU asleep"; without
   an NVIDIA GPU there is no bar.
+- **Colours**: seven series colours, one per app in every bar and on its table row. They go to
+  the RAM bar's five, then to the swap and VRAM bars' apps alternately, rank by rank, so each
+  bar's biggest app always has one; a bar names its apps down to the first left without a colour
+  and counts the rest as Other apps. A colour stays with its app while some bar names it.
 - A segment of at least 7.5% of its bar shows its size inside; a smaller one shows it in the
   legend.
 - Sizes are binary with KDE's short names (1 GB = 1024 MB); a unit steps up at 1000 of the one

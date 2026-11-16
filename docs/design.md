@@ -30,11 +30,16 @@ Top to bottom:
 1. **RAM bar** that sums to total RAM: the top apps in fixed colors, then other apps, zswap
    pool, file cache (hatched: freed on demand), kernel and drivers, free. Hovering a segment
    names it.
-2. **Swap bar**: how much of each app sits in swap.
-3. **VRAM bar** (NVIDIA only): each app's VRAM, driver and other, free. Empty with "GPU asleep"
+2. **Swap bar**: how much of each app sits in swap, naming the five biggest by swap.
+3. **VRAM bar** (NVIDIA only): each app's VRAM, naming the five biggest by VRAM, driver and
+   other, free. Empty with "GPU asleep"
    while the GPU sleeps.
 4. **App table**: name and icon, RAM in use, swapped out, file cache, CPU (cores), disk, GPU
-   and VRAM. Sorted by RAM. Expanding an app shows its processes and child groups.
+   and VRAM. Sorted by RAM, largest first, by default; clicking a numeric column's header sorts
+   by it (the thin chevron marks it, down for largest first) and clicking again reverses. The
+   order is remembered in the settings file; SebChat's "Apps" title row says "sorted by …".
+   Ties keep RAM's order. Expanding an app shows its processes and child groups.
+   An app has one colour in every bar and on its row (seven series colours).
 5. Small headline tiles for CPU, GPU, VRAM and disk beside the bars, under the menu button.
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.
