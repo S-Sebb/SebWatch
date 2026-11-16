@@ -309,6 +309,7 @@ pub fn snapshot() -> Snapshot {
         igpu: Some(Igpu {
             vendor: "Intel".into(),
             percent: 14.0,
+            whole_device: true,
         }),
         vram: Some((b(0.3, G), b(8.0, G))),
         gpu_asleep: false,

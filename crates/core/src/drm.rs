@@ -21,6 +21,58 @@ pub struct Device {
     pub pdev: String,
     /// "Intel" or "AMD", from the driver.
     pub vendor: &'static str,
+    /// Where the driver tells how busy the whole GPU is, compositor included; None where it
+    /// doesn't (the busy % then sums the clients read).
+    pub whole: Option<WholeSource>,
+}
+
+/// A sysfs file with the whole GPU's use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WholeSource {
+    /// Milliseconds the GPU has spent idle in its lowest power state since boot: i915's
+    /// `gt/gt0/rc6_residency_ms`, xe's `gtidle/idle_residency_ms`.
+    IdleMs(PathBuf),
+    /// Busy % now: amdgpu's `gpu_busy_percent`.
+    BusyPercent(PathBuf),
+}
+
+/// A reading of a [`WholeSource`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Whole {
+    IdleMs(u64),
+    BusyPercent(u64),
+}
+
+impl WholeSource {
+    /// The first of the driver's files that exists.
+    fn find(card: &Path, driver: &str) -> Option<Self> {
+        let dev = card.join("device");
+        let (files, idle) = match driver {
+            "i915" => (
+                vec![
+                    card.join("gt/gt0/rc6_residency_ms"),
+                    card.join("power/rc6_residency_ms"),
+                ],
+                true,
+            ),
+            "xe" => (vec![dev.join("tile0/gt0/gtidle/idle_residency_ms")], true),
+            _ => (vec![dev.join("gpu_busy_percent")], false),
+        };
+        let file = files.into_iter().find(|f| fs::read_to_string(f).is_ok())?;
+        Some(if idle {
+            WholeSource::IdleMs(file)
+        } else {
+            WholeSource::BusyPercent(file)
+        })
+    }
+
+    fn read(&self) -> Option<Whole> {
+        let number = |f: &Path| fs::read_to_string(f).ok()?.trim().parse().ok();
+        match self {
+            WholeSource::IdleMs(f) => number(f).map(Whole::IdleMs),
+            WholeSource::BusyPercent(f) => number(f).map(Whole::BusyPercent),
+        }
+    }
 }
 
 /// The first Intel or AMD GPU under `drm_root` (`/sys/class/drm`), the one the firmware set up
@@ -40,7 +92,8 @@ pub fn find_device(drm_root: &Path) -> Option<Device> {
     let found = cards.into_iter().filter_map(|card| {
         let dev = card.join("device");
         let driver = fs::read_link(dev.join("driver")).ok()?;
-        let vendor = match driver.file_name()?.to_str()? {
+        let driver = driver.file_name()?.to_str()?;
+        let vendor = match driver {
             "i915" | "xe" => "Intel",
             "amdgpu" => "AMD",
             _ => return None,
@@ -51,7 +104,15 @@ pub fn find_device(drm_root: &Path) -> Option<Device> {
             .to_str()?
             .to_owned();
         let boot = fs::read_to_string(dev.join("boot_vga")).is_ok_and(|s| s.trim() == "1");
-        Some((boot, Device { pdev, vendor }))
+        let whole = WholeSource::find(&card, driver);
+        Some((
+            boot,
+            Device {
+                pdev,
+                vendor,
+                whole,
+            },
+        ))
     });
     found.max_by_key(|(boot, _)| *boot).map(|(_, d)| d)
 }
@@ -73,6 +134,7 @@ pub struct Sample {
     /// Groups holding one of the user's processes whose fds can't be read: a process with extra
     /// privileges is closed even to its own user (KWin, which has `CAP_SYS_NICE`).
     pub unreadable: BTreeSet<PathBuf>,
+    whole: Option<Whole>,
 }
 
 /// What one client said in its fdinfo, if it is a client of `pdev`.
@@ -157,7 +219,10 @@ impl Scanner {
             .collect();
         // Lowest PID first: a client shared with a child counts for the parent.
         pids.sort_unstable();
-        let mut sample = Sample::default();
+        let mut sample = Sample {
+            whole: device.whole.as_ref().and_then(WholeSource::read),
+            ..Sample::default()
+        };
         let mut seen = HashMap::new();
         for pid in pids {
             let dir = proc_root.join(pid.to_string());
@@ -218,8 +283,12 @@ fn drm_fds(dir: &Path) -> io::Result<Vec<OsString>> {
 /// The device's use over `elapsed` between two samples.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Usage {
-    /// The busiest engine's busy %, summed over every client read (as `intel_gpu_top` shows it).
+    /// The whole GPU's busy %: 100 % less its idle share where the driver reports one (i915's
+    /// RC6 residency), else the driver's busy % (amdgpu), else the busiest engine summed over
+    /// every client read, which leaves out the processes that can't be read.
     pub busy_percent: f64,
+    /// `busy_percent` comes from the driver and covers every process, KWin's included.
+    pub whole_device: bool,
     /// Keyed by cgroup path relative to the cgroup root, like `cpu_io`.
     pub apps: BTreeMap<PathBuf, AppUsage>,
 }
@@ -260,8 +329,19 @@ pub fn usage(prev: &Sample, cur: &Sample, elapsed: Duration) -> Usage {
     let busiest = |engines: &BTreeMap<&str, f64>| {
         engines.values().fold(0.0, |a: f64, &b| a.max(b)).min(1.0) * 100.0
     };
+    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+    let busy_percent = match (prev.whole, cur.whole) {
+        (Some(Whole::IdleMs(then)), Some(Whole::IdleMs(now))) if elapsed_ms > 0.0 => {
+            let idle = now.saturating_sub(then) as f64 / elapsed_ms;
+            (1.0 - idle).clamp(0.0, 1.0) * 100.0
+        }
+        (_, Some(Whole::IdleMs(_))) => 0.0, // the first read: no interval yet
+        (_, Some(Whole::BusyPercent(p))) => p.min(100) as f64,
+        (_, None) => busiest(&device),
+    };
     Usage {
-        busy_percent: busiest(&device),
+        busy_percent,
+        whole_device: cur.whole.is_some(),
         apps: groups
             .into_iter()
             .map(|(group, (busy, memory_bytes))| {
@@ -321,6 +401,7 @@ mod tests {
             let device = Device {
                 pdev: PDEV.into(),
                 vendor: "Intel",
+                whole: None,
             };
             Scanner::default().read(&self.0, uid, &device)
         }
@@ -406,5 +487,47 @@ mod tests {
         let fresh = usage(&Sample::default(), &second, Duration::from_secs(2));
         assert_eq!(fresh.busy_percent, 0.0);
         assert_eq!(fresh.apps[Path::new(game)].busy_percent, 0.0);
+    }
+
+    #[test]
+    fn the_whole_gpu_is_busy_while_it_is_out_of_rc6() {
+        let at = |idle_ms| Sample {
+            whole: Some(Whole::IdleMs(idle_ms)),
+            ..Sample::default()
+        };
+        // 1.5 s of 2 s idle in RC6: 25 % busy, whatever the clients read say.
+        let u = usage(&at(9_198_586), &at(9_200_086), Duration::from_secs(2));
+        assert!((u.busy_percent - 25.0).abs() < 1e-9);
+        assert!(u.whole_device);
+        // Idle the whole time (a counter running a little ahead of our clock): 0, not below.
+        let u = usage(&at(1_000), &at(3_010), Duration::from_secs(2));
+        assert_eq!(u.busy_percent, 0.0);
+        // The first read has no interval yet.
+        assert_eq!(
+            usage(&Sample::default(), &at(5), Duration::ZERO).busy_percent,
+            0.0
+        );
+        // amdgpu says its busy % outright.
+        let amd = Sample {
+            whole: Some(Whole::BusyPercent(37)),
+            ..Sample::default()
+        };
+        assert_eq!(usage(&amd, &amd, Duration::from_secs(2)).busy_percent, 37.0);
+    }
+
+    #[test]
+    fn finds_the_rc6_counter_of_an_i915_card() {
+        let fx = Fixture::new("sysfs");
+        let card = fx.0.join("card1");
+        fs::create_dir_all(card.join("gt/gt0")).unwrap();
+        fs::write(card.join("gt/gt0/rc6_residency_ms"), "9198586\n").unwrap();
+        let source = WholeSource::find(&card, "i915").unwrap();
+        assert_eq!(
+            source,
+            WholeSource::IdleMs(card.join("gt/gt0/rc6_residency_ms"))
+        );
+        assert_eq!(source.read(), Some(Whole::IdleMs(9_198_586)));
+        // No such file: the busy % falls back to the clients.
+        assert_eq!(WholeSource::find(&card, "xe"), None);
     }
 }

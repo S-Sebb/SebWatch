@@ -422,6 +422,7 @@ fn igpu_total(r: IgpuReading) -> Igpu {
     Igpu {
         vendor: r.vendor.into(),
         percent: r.usage.busy_percent as f32,
+        whole_device: r.usage.whole_device,
     }
 }
 

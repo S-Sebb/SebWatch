@@ -144,7 +144,7 @@ the cgroup root, the same key the memory numbers use.
   | Figure | Source |
   |---|---|
   | Busy % per app | each engine's `drm-engine-<name>` ns increase over the refresh, divided by the interval and by `drm-engine-capacity-<name>` (default 1), summed over the app's clients; the busiest engine (usually render), as `intel_gpu_top` shows a client |
-  | GPU tile | the same over every client read |
+  | GPU tile | the whole GPU from the driver: 100 % less the share of the refresh it spent idle in RC6 (i915 `/sys/class/drm/card<N>/gt/gt0/rc6_residency_ms`, else `power/rc6_residency_ms`; xe `device/tile0/gt0/gtidle/idle_residency_ms`), or amdgpu's `device/gpu_busy_percent`; without either, the busiest engine summed over every client read |
   | GPU memory per app | `drm-resident-<region>` summed, else the older `drm-memory-<region>`; read but not shown |
 
   - **Clients**: a client is counted once by `drm-client-id`, for the lowest PID holding it (fds
@@ -153,9 +153,20 @@ the cgroup root, the same key the memory numbers use.
   - **Only the user's own processes**: another user's fds can't be read. Neither can a process
     of the user's that has extra privileges: the kernel makes it non-dumpable. **KWin**
     (`kwin_wayland` holds `CAP_SYS_NICE`) is one, so its compositing, usually most of the
-    iGPU's work, is in neither its row nor the tile. An app with an unreadable process whose
-    readable clients were idle shows "n/a" rather than "—" or "0" (KWin). Other users'
+    iGPU's work, is not in its row. An app with an unreadable process whose readable clients
+    were idle shows "n/a" rather than "—" or "0" (KWin); hovering the cell, and its row's
+    accessible text, say why: "KWin hides its GPU use: it runs with extra privileges, so its
+    GPU figures can't be read. The GPU tile still counts it." (the last sentence only where the
+    tile's figure comes from the driver). Other users'
     processes (system services) aren't looked at and show "—".
+  - **The tile and the apps don't add up.** The tile is the whole GPU, so it includes KWin and
+    any other unreadable process; the apps' cells are each one app's busiest engine, from
+    fdinfo. The tile is usually well above the apps' sum: on Seb's PC with a window animating it
+    read 38 % while the readable apps summed to 6 %, the rest mostly KWin compositing. RC6 also
+    counts time the GPU is awake but not running work (it waits a moment before it sleeps), so
+    the tile is "how much of the time the GPU was awake", a little above the busiest engine
+    `intel_gpu_top` shows (which needs root for the whole-GPU view). Two sums can't match for
+    another reason too: apps busy on different engines at once each count in full.
   - **Memory** on i915 is charged to the app's cgroup: buffers are shmem pages, charged to the
     process that allocates them, so they are already in its RAM in use (`shmem`). Checked
     2026-11-17: `glxgears` alone in a scope held 59 MB `drm-resident-system0` and its scope's

@@ -75,6 +75,8 @@ export struct Row {
     disk: string,
     // The Intel or AMD GPU; empty without one.
     igpu: string,
+    // Why that figure is "n/a" (KWin hides its GPU use); empty otherwise.
+    igpu-tip: string,
     gpu: string,
     vram: string,
     // Shown on hover; empty for none.
@@ -644,7 +646,7 @@ component RowView inherits Rectangle {
     accessible-label: self.entry.detail == "" ? self.entry.name : self.entry.name + " " + self.entry.detail;
     // AT-SPI (AccessKit 0.24) passes on neither text values nor the expanded state, so the
     // description says both, then the tooltip.
-    accessible-description: (!self.top ? "" : self.entry.expanded ? "expanded, " : "collapsed, ") + Columns.titles[0] + " " + self.entry.ram + ", " + Columns.titles[1] + " " + self.entry.swap + ", " + Columns.titles[2] + " " + self.entry.cache + ", " + Columns.titles[3] + " " + self.entry.cpu + ", " + Columns.titles[4] + " " + self.entry.disk + ", " + (Columns.igpu == "" ? "" : Columns.igpu + " GPU " + self.entry.igpu + ", ") + (Columns.igpu == "" ? "GPU " : "NVIDIA GPU ") + self.entry.gpu + ", " + Columns.titles[7] + " " + self.entry.vram + (self.entry.tip == "" ? "" : ". " + self.entry.tip);
+    accessible-description: (!self.top ? "" : self.entry.expanded ? "expanded, " : "collapsed, ") + Columns.titles[0] + " " + self.entry.ram + ", " + Columns.titles[1] + " " + self.entry.swap + ", " + Columns.titles[2] + " " + self.entry.cache + ", " + Columns.titles[3] + " " + self.entry.cpu + ", " + Columns.titles[4] + " " + self.entry.disk + ", " + (Columns.igpu == "" ? "" : Columns.igpu + " GPU " + self.entry.igpu + (self.entry.igpu-tip == "" ? "" : " (" + self.entry.igpu-tip + ")") + ", ") + (Columns.igpu == "" ? "GPU " : "NVIDIA GPU ") + self.entry.gpu + ", " + Columns.titles[7] + " " + self.entry.vram + (self.entry.tip == "" ? "" : ". " + self.entry.tip);
     accessible-expandable: self.top;
     accessible-expanded: self.entry.expanded;
     accessible-item-selectable: true;
@@ -744,7 +746,7 @@ component RowView inherits Rectangle {
             text: root.entry.disk;
             font-size: root.small;
         }
-        Cell {
+        igpu-cell := Cell {
             column: 5;
             muted: root.muted;
             text: Columns.igpu == "" ? "" : root.entry.igpu;
@@ -786,6 +788,24 @@ component RowView inherits Rectangle {
     TouchArea {
         clicked => {
             root.clicked();
+        }
+    }
+
+    // Over the Intel or AMD cell, above the row's touch area so it gets the hover.
+    if root.entry.igpu-tip != "": Rectangle {
+        x: igpu-cell.x;
+        y: 0;
+        width: igpu-cell.width;
+        height: root.line;
+        Tooltip {
+            TipCard {
+                Label {
+                    width: 320px;
+                    text: root.entry.igpu-tip;
+                    font-size: Theme.small;
+                    wrap: word-wrap;
+                }
+            }
         }
     }
 

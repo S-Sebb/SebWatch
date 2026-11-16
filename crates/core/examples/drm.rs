@@ -24,7 +24,15 @@ fn main() {
     let second = scanner.read(proc, uid, &device);
     println!("next read {:?}", again.elapsed());
     let u = usage(&first, &second, start.elapsed());
-    println!("device {:.1}% busy", u.busy_percent);
+    println!(
+        "device {:.1}% busy ({})",
+        u.busy_percent,
+        if u.whole_device {
+            "whole GPU, from the driver"
+        } else {
+            "clients read"
+        }
+    );
     for (group, app) in &u.apps {
         let mark = if second.unreadable.contains(group) {
             " (some processes unreadable)"

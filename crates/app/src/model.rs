@@ -57,8 +57,10 @@ pub struct Snapshot {
 pub struct Igpu {
     /// "Intel" or "AMD": the table's column and the GPU tile name it so.
     pub vendor: String,
-    /// The busiest engine's busy %, over every process that could be read.
+    /// The whole GPU's busy % (`drm::Usage::busy_percent`).
     pub percent: f32,
+    /// `percent` covers every process, the unreadable ones too.
+    pub whole_device: bool,
 }
 
 pub struct Unsplit {
@@ -269,6 +271,8 @@ pub struct View {
     history: History,
     /// Set from the reading for the rows: the NVIDIA driver didn't answer.
     gpu_unavailable: bool,
+    /// Set from the reading for the rows: the Intel or AMD GPU tile counts every process.
+    igpu_whole: bool,
     /// Readings failed in a row since the last one shown, and the last error.
     failures: u32,
     error: String,
@@ -503,6 +507,7 @@ impl View {
     fn show(&mut self, s: &Snapshot) -> Shown {
         self.tree.clear();
         self.gpu_unavailable = s.nvidia_unavailable;
+        self.igpu_whole = s.igpu.as_ref().is_some_and(|g| g.whole_device);
         let ram = top(&s.apps, |a| a.ram);
         let swap = top(&s.apps, |a| a.swap);
         let vram = top(&s.apps, |a| a.vram.unwrap_or(0));
@@ -659,6 +664,11 @@ impl View {
                 Some(p) => percent(p),
                 None if app.igpu_unreadable => NA.into(),
                 None => NONE.into(),
+            }
+            .into(),
+            igpu_tip: match app.igpu_percent {
+                None if app.igpu_unreadable => igpu_hidden(&app.name, self.igpu_whole),
+                _ => String::new(),
             }
             .into(),
             gpu: match app.gpu_percent {
@@ -851,6 +861,7 @@ fn empty_row() -> Row {
         cpu: none.clone(),
         disk: none.clone(),
         igpu: none.clone(),
+        igpu_tip: "".into(),
         gpu: none.clone(),
         vram: none,
         tip: "".into(),
@@ -1295,6 +1306,19 @@ fn cores(n: f32) -> String {
     format!("{n:.2}")
 }
 
+/// Why an app's Intel or AMD GPU figure is "n/a": its processes run with extra privileges (KWin),
+/// so the kernel keeps their GPU clients from other programs.
+fn igpu_hidden(name: &str, tile_counts_it: bool) -> String {
+    let tile = if tile_counts_it {
+        " The GPU tile still counts it."
+    } else {
+        ""
+    };
+    format!(
+        "{name} hides its GPU use: it runs with extra privileges, so its GPU figures can't be read.{tile}"
+    )
+}
+
 fn percent(n: f32) -> String {
     format!("{n:.0}%")
 }
@@ -1414,8 +1438,13 @@ mod tests {
             (row.igpu.to_string(), row.gpu.to_string())
         };
         assert_eq!(cell(&shown, "Zen Browser"), ("4%".into(), "2%".into()));
-        // KWin's clients can't be read: unknown, not none.
+        // KWin's clients can't be read: unknown, not none, and the cell says why.
         assert_eq!(cell(&shown, "KWin"), (NA.into(), "1%".into()));
+        let kwin = shown.rows.iter().find(|r| r.name == "KWin").unwrap();
+        assert!(kwin.igpu_tip.starts_with("KWin hides its GPU use"));
+        assert!(kwin.igpu_tip.ends_with("The GPU tile still counts it."));
+        let zen = shown.rows.iter().find(|r| r.name == "Zen Browser").unwrap();
+        assert_eq!(zen.igpu_tip, "");
         assert_eq!(cell(&shown, "Discord"), (NONE.into(), NONE.into()));
 
         // Sorted by it, the busiest first.
