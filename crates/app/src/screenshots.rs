@@ -316,10 +316,11 @@ fn mockups() {
     ui.hide().unwrap();
 }
 
-/// Variant P (pies instead of bars, figures instead of tiles) and the new leftover row.
+/// Round 3: the tile column today (style 0) and as large figures (1), ring gauges (2) and
+/// history graphs (3), awake and with the GPU asleep, in each theme.
 #[test]
 #[ignore = "writes PNG files"]
-fn pies() {
+fn tiles() {
     use crate::sample::mock;
     let dir = std::path::PathBuf::from(std::env::var("SEBWATCH_SHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
@@ -330,12 +331,16 @@ fn pies() {
         now: now.clone(),
     }))
     .unwrap();
-    let open = |choice, width, height, pies: bool, shown: crate::model::Shown| {
+    let open = |choice, width, height, style: i32, asleep: bool| {
         let ui = MainWindow::new().unwrap();
         ui.global::<Theme>().set_choice(choice);
-        ui.set_pies(pies);
+        ui.set_tile_style(style);
+        ui.set_graphs(slint::ModelRc::from(Rc::new(slint::VecModel::from(
+            mock::graphs(asleep),
+        ))));
         crate::setup(&ui, mock::snapshot(), |_| {});
-        crate::show(&ui, if pies { mock::pies(shown) } else { shown });
+        let make = if asleep { mock::asleep } else { mock::snapshot };
+        crate::show(&ui, mock::shown(make, 0, &[]));
         ui.show().unwrap();
         window.set_size(PhysicalSize::new(width, height));
         let shot = Shot {
@@ -348,67 +353,35 @@ fn pies() {
     };
     let save =
         |shot: &Shot, name: &str| shot.save(&shot.render(), &dir.join(format!("{name}.png")));
-
     for (choice, name, height) in [
         (ThemeChoice::Light, "light", 844),
         (ThemeChoice::Dark, "dark", 844),
         (ThemeChoice::Sebchat, "sebchat", 1024),
     ] {
-        let (ui, shot) = open(
-            choice,
-            1000,
-            height,
-            true,
-            mock::shown(mock::snapshot, 0, &["Android emulator"]),
-        );
-        ui.set_selected("Android emulator".into());
-        let android = ui.global::<Theme>().get_series().row_data(1).unwrap();
-        // The middle of the memory donut's slice: the centroid of its colour left of x = 320,
-        // above the legend.
-        let pixels = shot.render();
-        let hits: Vec<(u32, u32)> = pixels
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| (p.r, p.g, p.b) == (android.red(), android.green(), android.blue()))
-            .map(|(i, _)| (i as u32 % shot.width, i as u32 / shot.width))
-            .filter(|&(x, _)| x < 320)
-            .collect();
-        let top = hits[0].1;
-        let slice: Vec<_> = hits.into_iter().filter(|&(_, y)| y < top + 110).collect();
-        let n = slice.len() as f32;
-        let x = slice.iter().map(|p| p.0 as f32).sum::<f32>() / n;
-        let y = slice.iter().map(|p| p.1 as f32).sum::<f32>() / n;
-        shot.pointer(x, y, false);
-        shot.wait(Duration::from_millis(800));
-        save(&shot, &format!("p-main-{name}"));
-        ui.hide().unwrap();
+        for style in 0..4 {
+            for asleep in [false, true] {
+                let (ui, shot) = open(choice, 1000, height, style, asleep);
+                save(
+                    &shot,
+                    &format!("t{style}-{name}{}", if asleep { "-asleep" } else { "" }),
+                );
+                ui.hide().unwrap();
+            }
+        }
     }
-    let light = ThemeChoice::Light;
-    let (ui, shot) = open(light, 1000, 844, true, mock::shown(mock::asleep, 0, &[]));
-    save(&shot, "p-asleep-light");
+    // T1 with the CPU busy: the value in the warning colour.
+    let (ui, shot) = open(ThemeChoice::Light, 1000, 844, 1, false);
+    let tiles = ui.get_tiles();
+    let mut cpu = tiles.row_data(0).unwrap();
+    cpu.value = "14.6".into();
+    cpu.fraction = 14.6 / 16.0;
+    tiles.set_row_data(0, cpu);
+    save(&shot, "t1-light-busy");
     ui.hide().unwrap();
+    // The recommended T1 at the minimum width and height.
     for (name, width, height) in [("narrow", 760, 844), ("short", 1000, 480)] {
-        let (ui, shot) = open(
-            light,
-            width,
-            height,
-            true,
-            mock::shown(mock::snapshot, 0, &[]),
-        );
-        save(&shot, &format!("p-{name}-light"));
+        let (ui, shot) = open(ThemeChoice::Light, width, height, 1, false);
+        save(&shot, &format!("t1-light-{name}"));
         ui.hide().unwrap();
     }
-    // The approved bars with the new leftover wording, its row focused with the explanation.
-    let (ui, shot) = open(
-        light,
-        1000,
-        844,
-        false,
-        mock::shown(mock::snapshot, 0, &["Android emulator"]),
-    );
-    ui.set_selected("Android emulator".into());
-    ui.set_focus_row(6);
-    ui.set_row_tip(mock::UNREADABLE.into());
-    save(&shot, "leftover-light");
-    ui.hide().unwrap();
 }

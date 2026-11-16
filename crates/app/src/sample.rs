@@ -753,11 +753,48 @@ pub mod mock {
         s
     }
 
-    /// Variant P: no VRAM tile, the VRAM donut shows it.
-    pub fn pies(mut shown: Shown) -> Shown {
-        shown.tiles.retain(|t| t.name != "VRAM");
-        shown
+    /// T3: the tiles' last 60 s (30 readings at 2 s) as lines in a 290 x 45 box: CPU and GPU in
+    /// % of the whole, VRAM in % of total, disk scaled to its own peak. Asleep: no GPU or VRAM line.
+    pub fn graphs(asleep: bool) -> Vec<SharedString> {
+        let wave = |base: f32, swing: f32, seed: f32| -> Vec<f32> {
+            (0..30)
+                .map(|i| {
+                    let t = i as f32 + seed;
+                    (base + swing * ((t * 0.7).sin() * 0.6 + (t * 2.3).sin() * 0.4)).max(0.0)
+                })
+                .collect()
+        };
+        let mut cpu = wave(15.0, 6.0, 0.0);
+        cpu[21] = 48.0;
+        cpu[22] = 37.0;
+        let gpu = wave(2.0, 2.0, 3.0);
+        let vram = vec![3.7; 30];
+        let mut disk = wave(2.0, 2.0, 1.0);
+        disk[8] = 12.0;
+        disk[27] = 9.0;
+        let peak = disk.iter().cloned().fold(0.0, f32::max);
+        let disk: Vec<f32> = disk.iter().map(|d| d / peak * 90.0).collect();
+        let line = |v: &[f32]| -> SharedString {
+            v.iter()
+                .enumerate()
+                .map(|(i, y)| {
+                    let (x, y) = (i as f32 * 10.0, 45.0 - y.clamp(2.0, 100.0) * 0.45);
+                    format!("{} {x} {y:.1}", if i == 0 { "M" } else { "L" })
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .into()
+        };
+        let none = SharedString::new();
+        vec![
+            line(&cpu),
+            if asleep { none.clone() } else { line(&gpu) },
+            if asleep { none } else { line(&vram) },
+            line(&disk),
+        ]
     }
 
+    // The leftover row's explanation on hover or focus (round 2 wording, approved).
+    #[allow(dead_code)]
     pub const UNREADABLE: &str = "Memory charged to Android emulator but to none of its processes it could read: kernel memory and zswap for the app, and adb (4130302), which runs as another user so SebWatch may not read it.";
 }

@@ -244,264 +244,126 @@ component BarView {
     }
 }
 
-// Variant P: the hovered donut slice, drawn by the window above everything else.
-global Hover {
-    in-out property <bool> on;
-    in-out property <Segment> segment;
-    in-out property <length> x;
-    in-out property <length> y;
-}
-
-component TipCard inherits Rectangle {
-    in property <Segment> s;
-    background: Theme.popup;
-    border-width: 1px;
-    border-color: Theme.picnic ? Theme.outline : Theme.line;
-    border-radius: Theme.picnic ? 0 : 4px;
-    drop-shadow-blur: Theme.picnic ? 0 : 10px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-offset-x: Theme.picnic ? 3px : 0;
-    drop-shadow-color: Theme.picnic ? #5B331C30 : #00000040;
-    VerticalLayout {
-        padding-left: Theme.picnic ? 10px : 9px;
-        padding-right: self.padding-left;
-        padding-top: Theme.picnic ? 8px : 6px;
-        padding-bottom: self.padding-top;
-        spacing: 2px;
-        HorizontalLayout {
-            spacing: 6px;
-            VerticalLayout {
-                alignment: center;
-                Swatch {
-                    kind: root.s.kind;
-                    series: root.s.series;
-                }
-            }
-            Label {
-                text: root.s.detail == "" ? root.s.name : root.s.name + " " + root.s.detail;
-                font-size: Theme.small;
-                font-weight: Theme.picnic ? 800 : 700;
-            }
-        }
-        Label {
-            text: root.s.tip;
-            font-size: Theme.small;
-        }
-        for note in root.s.notes: Muted {
-            text: note;
-            font-size: Theme.small;
-        }
-    }
-}
-
-// Variant P: a bar drawn as a donut, slices clockwise from the top in the bar's order.
-component Donut {
-    in property <Bar> bar;
-    in property <string> note;
-    // Outer and inner radius in a 200-unit box.
-    property <float> R: 100;
-    property <float> r: 62;
-    property <float> gap: 1.4;
-    property <length> size: min(self.width, 164px);
-
-    pure function ox(a: float, rad: float) -> float {
-        return 100 + rad * Math.sin(a * 1deg);
-    }
-    pure function oy(a: float, rad: float) -> float {
-        return 100 - rad * Math.cos(a * 1deg);
-    }
-    pure function slice(a0: float, a1: float) -> string {
-        let large = a1 - a0 > 180 ? "1" : "0";
-        return "M " + ox(a0, R) + " " + oy(a0, R) + " A " + R + " " + R + " 0 " + large + " 1 " + ox(a1, R) + " " + oy(a1, R)
-            + " L " + ox(a1, r) + " " + oy(a1, r) + " A " + r + " " + r + " 0 " + large + " 0 " + ox(a0, r) + " " + oy(a0, r) + " Z";
-    }
-    pure function hit(start: float, fraction: float) -> bool {
-        if !touch.has-hover {
-            return false;
-        }
-        let dx = touch.mouse-x / ring.width * 200 - 100;
-        let dy = touch.mouse-y / ring.height * 200 - 100;
-        let d = Math.sqrt(dx * dx + dy * dy);
-        if d < root.r || d > root.R {
-            return false;
-        }
-        let a = Math.atan2(dx, -dy) / 1deg;
-        let f = (a < 0 ? a + 360 : a) / 360;
-        return f >= start && f < start + fraction;
-    }
-
-    VerticalLayout {
-        spacing: 8px;
-        alignment: start;
-        HorizontalLayout {
-            SectionTitle {
-                text: root.bar.title;
-            }
-            Muted {
-                text: root.bar.total;
-                horizontal-alignment: right;
-                vertical-alignment: bottom;
-            }
-        }
-        Rectangle {
-            height: root.size;
-            ring := Rectangle {
-                x: (parent.width - self.width) / 2;
-                width: root.size;
-                height: root.size;
-                // A sleeping GPU: an empty outlined ring, its reason in the middle.
-                if root.bar.segments.length == 0: Path {
-                    width: 100%;
-                    height: 100%;
-                    viewbox-width: 200;
-                    viewbox-height: 200;
-                    commands: "M 100 0.5 A 99.5 99.5 0 1 1 99.99 0.5 Z M 100 38.5 A 61.5 61.5 0 1 0 100.01 38.5 Z";
-                    stroke: Theme.muted;
-                    stroke-width: Theme.picnic ? 2px : 1px;
-                }
-                if root.bar.segments.length == 0: Muted {
-                    width: 100%;
-                    height: 100%;
-                    horizontal-alignment: center;
-                    text: root.note != "" ? root.note : root.bar.total;
-                    font-size: Theme.small;
-                }
-                for s in root.bar.segments: Rectangle {
-                    property <float> a0: s.start * 360 + root.gap / 2;
-                    property <float> a1: max(a0 + 0.8, (s.start + s.fraction) * 360 - root.gap / 2);
-                    property <bool> hovered: root.hit(s.start, s.fraction);
-                    changed hovered => {
-                        if self.hovered {
-                            Hover.segment = s;
-                            Hover.x = touch.absolute-position.x + touch.mouse-x;
-                            Hover.y = touch.absolute-position.y + touch.mouse-y;
-                            Hover.on = true;
-                        } else if Hover.segment.name == s.name {
-                            Hover.on = false;
-                        }
-                    }
-                    Path {
-                        width: 100%;
-                        height: 100%;
-                        viewbox-width: 200;
-                        viewbox-height: 200;
-                        commands: root.slice(parent.a0, parent.a1);
-                        fill: SegmentFill.color(s.kind, s.series);
-                        stroke: parent.hovered ? Theme.fg : s.kind == SegmentKind.free ? Theme.muted : transparent;
-                        stroke-width: parent.hovered ? 2px : Theme.picnic ? 2px : 1px;
-                    }
-                    // Freeable memory hatched, as in the bars: short strokes across the ring.
-                    property <float> step: 5;
-                    for j in (s.kind == SegmentKind.cache || s.kind == SegmentKind.closed) ? Math.min(72, Math.floor((self.a1 - self.a0) / self.step)) : 0: Path {
-                        width: 100%;
-                        height: 100%;
-                        viewbox-width: 200;
-                        viewbox-height: 200;
-                        property <float> a: parent.a0 + (j + 0.5) * parent.step;
-                        commands: "M " + root.ox(self.a - 3, root.r + 2) + " " + root.oy(self.a - 3, root.r + 2) + " L " + root.ox(self.a + 3, root.R - 2) + " " + root.oy(self.a + 3, root.R - 2);
-                        stroke: Theme.hatch;
-                        stroke-width: 1px;
-                    }
-                }
-            }
-            touch := TouchArea {
-                x: ring.x;
-                width: ring.width;
-            }
-        }
-        FlexboxLayout {
-            spacing-horizontal: 12px;
-            spacing-vertical: 4px;
-            for s in root.bar.segments: HorizontalLayout {
-                spacing: 5px;
-                VerticalLayout {
-                    alignment: center;
-                    Swatch {
-                        kind: s.kind;
-                        series: s.series;
-                    }
-                }
-                Label {
-                    text: s.name + "  " + s.size;
-                    font-size: Theme.small;
-                }
-            }
-        }
-    }
-}
-
-// Variant P: a headline figure without a meter, e.g. "CPU 2.6 of 16 cores".
-component Figure {
-    in property <Tile> tile;
-    HorizontalLayout {
-        spacing: 6px;
-        Muted {
-            text: root.tile.name;
-            font-weight: Theme.picnic ? 800 : 400;
-        }
-        if root.tile.value != "": Label {
-            text: root.tile.value;
-            font-family: Theme.picnic ? "Jersey 10" : "";
-            font-size: Theme.picnic ? 24px : 16px;
-        }
-        Muted {
-            text: root.tile.unit;
-            font-size: Theme.small;
-        }
-    }
-}
-
 component TileView inherits Card {
     in property <Tile> tile;
+    // Round 3: 0 today's meter, 1 large figure, 2 ring gauge, 3 history graph.
+    in property <int> style;
+    // The last 60 s for style 3, a line in a 290 x 45 box, empty for none.
+    in property <string> graph;
+    // T1: the value turns the warning colour from 90 %.
+    property <bool> busy: root.tile.fraction >= 0.9;
+    property <angle> sweep: Math.clamp(root.tile.fraction, 0, 0.999) * 360deg;
     inset: 12px;
     Rectangle {
         background: Theme.picnic ? transparent : Theme.view;
         border-width: Theme.picnic ? 0 : 1px;
         border-color: Theme.line;
         border-radius: 5px;
-        VerticalLayout {
+        clip: true;
+        // T3: the history behind the figures, filling the tile's lower part.
+        if root.style == 3 && root.graph != "": Path {
+            x: 0;
+            width: parent.width;
+            // The graph's box is 290 x 45; a Path keeps its viewbox's shape.
+            height: self.width * 45 / 290;
+            y: parent.height - self.height;
+            viewbox-width: 290;
+            viewbox-height: 45;
+            commands: root.graph + " L 290 45 L 0 45 Z";
+            fill: Theme.picnic ? #B8445F30 : #3daee930;
+            stroke: Theme.accent;
+            stroke-width: Theme.picnic ? 2px : 1.5px;
+        }
+        HorizontalLayout {
             padding-left: Theme.picnic ? 0 : 10px;
             padding-right: self.padding-left;
             padding-top: Theme.picnic ? 0 : 7px;
             padding-bottom: Theme.picnic ? 0 : 9px;
-            spacing: 2px;
-            // A tile stretched to line up with the bars keeps its content together.
-            alignment: center;
-            Muted {
-                text: root.tile.name;
-                font-size: Theme.small;
-                font-weight: Theme.picnic ? 800 : 400;
+            spacing: 10px;
+            // T2: the ring, the share of the whole (no ring for disk, which has no maximum).
+            if root.style == 2 && root.tile.fraction >= 0: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 46px;
+                    height: 46px;
+                    Path {
+                        width: 100%;
+                        height: 100%;
+                        viewbox-width: 100;
+                        viewbox-height: 100;
+                        commands: "M 50 9 A 41 41 0 1 1 49.99 9";
+                        stroke: Theme.track;
+                        stroke-width: Theme.picnic ? 6px : 5px;
+                    }
+                    if root.tile.fraction > 0.004: Path {
+                        width: 100%;
+                        height: 100%;
+                        viewbox-width: 100;
+                        viewbox-height: 100;
+                        commands: "M 50 9 A 41 41 0 " + (root.sweep > 180deg ? "1" : "0") + " 1 " + (50 + 41 * Math.sin(root.sweep)) + " " + (50 - 41 * Math.cos(root.sweep));
+                        stroke: root.busy ? Theme.warning : Theme.accent;
+                        stroke-width: Theme.picnic ? 6px : 5px;
+                    }
+                    Label {
+                        width: 100%;
+                        height: 100%;
+                        horizontal-alignment: center;
+                        text: root.tile.value == "" ? "—" : Math.round(root.tile.fraction * 100) + "%";
+                        font-size: 11px;
+                        color: root.tile.value == "" ? Theme.muted : Theme.fg;
+                    }
+                }
             }
-            HorizontalLayout {
-                spacing: 5px;
-                alignment: start;
-                // No value while the GPU sleeps: the unit says so.
-                if root.tile.value != "": Label {
+            VerticalLayout {
+                spacing: root.style == 0 ? 2px : 0;
+                // A tile stretched to line up with the bars keeps its content together.
+                alignment: root.style == 3 ? start : center;
+                Muted {
+                    text: root.tile.name;
+                    font-size: Theme.small;
+                    font-weight: Theme.picnic ? 800 : 400;
+                }
+                if root.style == 0: HorizontalLayout {
+                    spacing: 5px;
+                    alignment: start;
+                    // No value while the GPU sleeps: the unit says so.
+                    if root.tile.value != "": Label {
+                        text: root.tile.value;
+                        font-family: Theme.picnic ? "Jersey 10" : "";
+                        font-size: Theme.picnic ? 26px : 17.33px;
+                        vertical-alignment: bottom;
+                    }
+                    Muted {
+                        text: root.tile.unit;
+                        font-size: Theme.small;
+                        vertical-alignment: bottom;
+                        // Sits on the value's baseline.
+                        height: Theme.picnic ? 24px : 22px;
+                    }
+                }
+                // T1, T2, T3: the value large, the unit and detail below.
+                if root.style != 0 && root.tile.value != "": Label {
                     text: root.tile.value;
                     font-family: Theme.picnic ? "Jersey 10" : "";
-                    font-weight: Theme.picnic ? 400 : 400;
-                    font-size: Theme.picnic ? 26px : 17.33px;
-                    vertical-alignment: bottom;
+                    font-size: Theme.picnic ? (root.style == 1 ? 36px : 32px) : (root.style == 1 ? 24px : 22px);
+                    font-weight: Theme.picnic ? 400 : (root.style == 1 ? 300 : 400);
+                    color: root.style == 1 && root.busy ? Theme.warning : Theme.fg;
                 }
-                Muted {
+                if root.style != 0: Muted {
                     text: root.tile.unit;
                     font-size: Theme.small;
-                    vertical-alignment: bottom;
-                    // Sits on the value's baseline.
-                    height: Theme.picnic ? 24px : 22px;
                 }
-            }
-            if root.tile.fraction >= 0: Rectangle {
-                height: Theme.picnic ? 6px : 4px;
-                background: Theme.track;
-                border-radius: Theme.picnic ? 0 : 2px;
-                Rectangle {
-                    x: 0;
-                    width: parent.width * Math.clamp(root.tile.fraction, 0, 1);
-                    background: Theme.accent;
-                    border-radius: parent.border-radius;
+                if root.style == 0 && root.tile.fraction >= 0: Rectangle {
+                    height: Theme.picnic ? 6px : 4px;
+                    background: Theme.track;
+                    border-radius: Theme.picnic ? 0 : 2px;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * Math.clamp(root.tile.fraction, 0, 1);
+                        background: Theme.accent;
+                        border-radius: parent.border-radius;
+                    }
                 }
-                // Breeze leaves a little air above the meter.
             }
         }
     }
@@ -1033,10 +895,10 @@ export component MainWindow inherits Window {
     in property <string> message;
     in property <string> placeholder-title;
     in property <string> placeholder-text;
-    // Variant P: donuts instead of bars, figures instead of tiles.
-    in property <bool> pies;
-    // Three equal columns, whatever their legends hold.
-    property <length> pie-width: (root.width - 32px - 2 * (Theme.picnic ? 22px : 28px) - (Theme.picnic ? 28px : 0)) / 3;
+    // Round 3: the tile look, 0 today's meters, 1 large figures, 2 ring gauges, 3 history graphs,
+    // and each tile's last 60 s as SVG path commands in a 290 x 45 box (style 3).
+    in property <int> tile-style;
+    in property <[string]> graphs;
     in property <string> row-tip;
 
     in property <string> version;
@@ -1115,63 +977,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
-        if root.pies: VerticalLayout {
-            // Inside an `if`, the layout would get only its minimum: the legends' wrapped lines.
-            min-height: self.preferred-height;
-            padding-left: 16px;
-            padding-right: 16px;
-            spacing: Theme.picnic ? 18px : 14px;
-            vertical-stretch: 0;
-            HorizontalLayout {
-                spacing: 16px;
-                Card {
-                    inset: 10px;
-                    HorizontalLayout {
-                        spacing: 28px;
-                        alignment: start;
-                        for t in root.tiles: VerticalLayout {
-                            alignment: center;
-                            Figure {
-                                tile: t;
-                            }
-                        }
-                    }
-                }
-                Rectangle {
-                    horizontal-stretch: 1;
-                }
-                VerticalLayout {
-                    alignment: center;
-                    MenuButton {
-                        focus-index: root.menu-focus;
-                        chosen(choice) => {
-                            root.theme-chosen(choice);
-                        }
-                    }
-                }
-            }
-            Card {
-                HorizontalLayout {
-                    spacing: Theme.picnic ? 22px : 28px;
-                    Donut {
-                        width: root.pie-width;
-                        bar: root.memory;
-                    }
-                    Donut {
-                        width: root.pie-width;
-                        bar: root.swap;
-                    }
-                    if root.has-vram: Donut {
-                        width: root.pie-width;
-                        bar: root.vram;
-                        note: root.vram-note;
-                    }
-                }
-            }
-        }
-        if !root.pies: HorizontalLayout {
-            // Inside an `if`, the layout would get only its minimum: the legends' wrapped lines.
-            min-height: self.preferred-height;
+        HorizontalLayout {
             padding-left: 16px;
             padding-right: 16px;
             spacing: Theme.picnic ? 22px : 16px;
@@ -1210,8 +1016,10 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-                for tile in root.tiles: TileView {
+                for tile[i] in root.tiles: TileView {
                     tile: tile;
+                    style: root.tile-style;
+                    graph: i < root.graphs.length ? root.graphs[i] : "";
                 }
             }
         }
@@ -1248,13 +1056,5 @@ export component MainWindow inherits Window {
             }
         }
     }
-    }
-
-    if root.pies && Hover.on: TipCard {
-        s: Hover.segment;
-        width: self.preferred-width;
-        height: self.preferred-height;
-        x: Math.min(Hover.x + 12px, root.width - self.preferred-width - 8px);
-        y: Hover.y + 18px;
     }
 }
