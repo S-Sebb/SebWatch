@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Builds the release binary and installs it with its launcher entry and icons into PREFIX (default ~/.local).
+# Usage: scripts/install [PREFIX]. scripts/uninstall [PREFIX] removes the same files.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+prefix=${1:-$HOME/.local}
+
+cargo build --release -p sebwatch
+install -Dm755 target/release/sebwatch "$prefix/bin/sebwatch"
+install -Dm644 packaging/sebwatch.desktop "$prefix/share/applications/sebwatch.desktop"
+for icon in art/icons/hicolor/*/apps/sebwatch.png; do
+    install -Dm644 "$icon" "$prefix/share/icons/${icon#art/icons/}"
+done
+
+scripts/refresh-caches "$prefix"
+echo "Installed SebWatch into $prefix"

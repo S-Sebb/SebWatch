@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Refreshes the desktop-entry and icon caches under PREFIX after an install or uninstall, with whichever tools exist.
+prefix=$1
+command -v update-desktop-database >/dev/null && update-desktop-database -q "$prefix/share/applications"
+# Only refresh an icon cache that exists: creating one would hide icons added later without a refresh.
+[ -f "$prefix/share/icons/hicolor/index.theme" ] && command -v gtk-update-icon-cache >/dev/null &&
+    gtk-update-icon-cache -q -t "$prefix/share/icons/hicolor"
+command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1
+exit 0
