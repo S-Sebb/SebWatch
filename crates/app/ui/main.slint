@@ -35,8 +35,12 @@ export struct Tile {
     name: string,
     value: string,
     unit: string,
-    // The meter's fill, 0 to 1; below 0 for no meter.
-    fraction: float,
+    // Has a graph of the last minute: not while the GPU sleeps.
+    graphed: bool,
+    // That minute as SVG path commands in a 290 x 100 box: the line, and the area under it.
+    // Empty before two readings in a row.
+    line: string,
+    area: string,
 }
 
 export enum RowKind { app, group, process, kernel, more }
@@ -263,54 +267,63 @@ component TileView inherits Card {
     accessible-role: groupbox;
     accessible-label: self.tile.name;
     accessible-description: self.tile.value == "" ? self.tile.unit : self.tile.value + " " + self.tile.unit;
+    // Tiles with a graph share out the bars' height; a sleeping GPU's tiles keep to their words.
+    vertical-stretch: self.tile.graphed ? 1 : 0;
     Rectangle {
         background: Theme.picnic ? transparent : Theme.view;
         border-width: Theme.picnic ? 0 : 1px;
         border-color: Theme.line;
         border-radius: 5px;
+        clip: true;
         VerticalLayout {
-            padding-left: Theme.picnic ? 0 : 10px;
-            padding-right: self.padding-left;
             padding-top: Theme.picnic ? 0 : 7px;
-            padding-bottom: Theme.picnic ? 0 : 9px;
+            // Breeze keeps a near-zero line clear of the tile's border.
+            padding-bottom: Theme.picnic ? 0 : root.tile.graphed ? 3px : 9px;
             spacing: 2px;
-            // A tile stretched to line up with the bars keeps its content together.
-            alignment: center;
-            Muted {
-                text: root.tile.name;
-                font-size: Theme.small;
-                font-weight: Theme.picnic ? 800 : 400;
-            }
-            HorizontalLayout {
-                spacing: 5px;
-                alignment: start;
+            VerticalLayout {
+                padding-left: Theme.picnic ? 0 : 10px;
+                padding-right: self.padding-left;
+                vertical-stretch: 0;
+                Muted {
+                    text: root.tile.name;
+                    font-size: Theme.small;
+                    font-weight: Theme.picnic ? 800 : 400;
+                }
                 // No value while the GPU sleeps: the unit says so.
                 if root.tile.value != "": Label {
                     text: root.tile.value;
                     font-family: Theme.picnic ? "Jersey 10" : "";
-                    font-weight: Theme.picnic ? 400 : 400;
-                    font-size: Theme.picnic ? 26px : 17.33px;
-                    vertical-alignment: bottom;
+                    font-size: Theme.picnic ? 32px : 22px;
+                    // Without the font's full leading, leaving the graph more room.
+                    height: Theme.picnic ? 30px : 26px;
                 }
                 Muted {
                     text: root.tile.unit;
                     font-size: Theme.small;
-                    vertical-alignment: bottom;
-                    // Sits on the value's baseline.
-                    height: Theme.picnic ? 24px : 22px;
                 }
             }
-            if root.tile.fraction >= 0: Rectangle {
-                height: Theme.picnic ? 6px : 4px;
-                background: Theme.track;
-                border-radius: Theme.picnic ? 0 : 2px;
-                Rectangle {
-                    x: 0;
-                    width: parent.width * Math.clamp(root.tile.fraction, 0, 1);
-                    background: Theme.accent;
-                    border-radius: parent.border-radius;
+            // The last minute along the bottom, below the words so no line runs under them.
+            if root.tile.graphed: Rectangle {
+                min-height: 16px;
+                vertical-stretch: 1;
+                if root.tile.area != "": Path {
+                    viewbox-width: 290;
+                    viewbox-height: 100;
+                    fit: fill;
+                    commands: root.tile.area;
+                    fill: Theme.accent.with-alpha(0.19);
+                    // Fitted like the line, which leaves room for its stroke.
+                    stroke: transparent;
+                    stroke-width: Theme.picnic ? 2px : 1.5px;
                 }
-                // Breeze leaves a little air above the meter.
+                if root.tile.line != "": Path {
+                    viewbox-width: 290;
+                    viewbox-height: 100;
+                    fit: fill;
+                    commands: root.tile.line;
+                    stroke: Theme.accent;
+                    stroke-width: Theme.picnic ? 2px : 1.5px;
+                }
             }
         }
     }

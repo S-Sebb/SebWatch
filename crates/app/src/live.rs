@@ -155,6 +155,7 @@ impl Reader {
             .values()
             .fold((0.0, 0), |(cpu, io), r| (cpu + r.cpu_cores, io + disk(*r)));
         Ok(Snapshot {
+            taken: now,
             ram_total: mem.total,
             swap_total: swap_total(),
             zswap_pool: mem.zswap_pool,

@@ -1,5 +1,6 @@
 mod art;
 mod desktop;
+mod history;
 mod icons;
 mod live;
 mod model;
@@ -21,6 +22,7 @@ use slint::{ComponentHandle, ModelRc, RenderingState, VecModel, Weak};
 
 slint::include_modules!();
 
+/// How often the window reads, while it is shown.
 const REFRESH: Duration = Duration::from_secs(2);
 
 thread_local! {

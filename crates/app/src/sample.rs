@@ -1,6 +1,8 @@
 //! A fixed reading with the approved mockup's numbers (this PC, 2026-11-15), shown until the
 //! window reads `sebwatch-core`.
 
+use std::time::{Duration, Instant};
+
 use crate::model::{App, Closed, Exited, Part, Snapshot, Unreadable};
 
 const K: f64 = 1024.0;
@@ -290,6 +292,7 @@ pub fn snapshot() -> Snapshot {
     let apps_ram: u64 = apps.iter().map(|a| a.ram).sum();
     let closed = closed();
     Snapshot {
+        taken: Instant::now(),
         ram_total,
         swap_total: b(32.0, G),
         zswap_pool,
@@ -344,4 +347,36 @@ pub fn asleep() -> Snapshot {
         app.vram = None;
     }
     s
+}
+
+/// A minute of readings at 2 s ending in `last`: CPU with a short burst, the GPU near idle, VRAM
+/// steady, disk with two spikes (the tiles' graphs, mockup T3).
+pub fn minute(last: fn() -> Snapshot, start: Instant) -> Vec<Snapshot> {
+    let wave = |base: f32, swing: f32, seed: f32, i: usize| {
+        let t = i as f32 + seed;
+        (base + swing * ((t * 0.7).sin() * 0.6 + (t * 2.3).sin() * 0.4)).max(0.0)
+    };
+    (0..30)
+        .map(|i| {
+            let mut s = last();
+            s.taken = start + Duration::from_secs(2 * i as u64);
+            if i < 29 {
+                let cpu = match i {
+                    21 => 48.0,
+                    22 => 37.0,
+                    _ => wave(15.0, 6.0, 0.0, i),
+                };
+                s.cpu_used = cpu / 100.0 * s.cpu_cores as f32;
+                if !s.gpu_asleep {
+                    s.nvidia_percent = s.nvidia_percent.map(|_| wave(2.0, 2.0, 3.0, i));
+                }
+                let disk = match i {
+                    8 => 12.0,
+                    _ => wave(2.0, 2.0, 1.0, i),
+                };
+                s.disk_per_s = b(disk as f64, M);
+            }
+            s
+        })
+        .collect()
 }

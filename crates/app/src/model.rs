@@ -3,9 +3,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Instant;
 
 use slint::{ModelRc, SharedString, VecModel};
 
+use crate::history::{History, Measure};
 use crate::icons::Icons;
 use crate::{Bar, Row, RowKind, Segment, SegmentKind, TableKey, Tile};
 
@@ -20,6 +22,8 @@ const LABELLED: f32 = 0.075;
 const LISTED: usize = 11;
 
 pub struct Snapshot {
+    /// When it was read, for the tiles' graphs.
+    pub taken: Instant,
     pub ram_total: u64,
     pub swap_total: u64,
     /// Compressed pages no app is charged for.
@@ -232,6 +236,7 @@ pub struct View {
     colours: Colours,
     expanded: HashSet<String>,
     icons: Icons,
+    history: History,
     /// The last rendered rows, in order.
     tree: Vec<Node>,
     focus: Option<Focus>,
@@ -430,6 +435,7 @@ impl View {
 
     /// Shows a new reading.
     pub fn update(&mut self, snapshot: Snapshot) -> Shown {
+        self.history.push(snapshot.taken, readings(&snapshot));
         self.last = Some(snapshot);
         self.render()
     }
@@ -463,7 +469,7 @@ impl View {
             memory: memory_bar(s, &series, &ram),
             swap: swap_bar(s, &series, &coloured(swap, &series)),
             vram: vram_bar(s, &series, &coloured(vram, &series)),
-            tiles: tiles(s),
+            tiles: tiles(s, &self.history),
             rows: self.rows(s, &series),
             focus: self.refocus(),
             sort: self.sort,
@@ -1007,53 +1013,71 @@ fn vram_bar(s: &Snapshot, series: &Series, named: &[&App]) -> Option<Bar> {
     ))
 }
 
-fn tiles(s: &Snapshot) -> Vec<Tile> {
-    let mut tiles = vec![Tile {
-        name: "CPU".into(),
-        value: format!("{:.1}", s.cpu_used).into(),
-        unit: format!("of {} cores", s.cpu_cores).into(),
-        fraction: s.cpu_used / s.cpu_cores.max(1) as f32,
-    }];
-    // A sleeping GPU keeps its tiles, saying so in place of the figures not read (no value: the
-    // words need the tile's width).
+/// The graphed figures of a reading, in `Measure` order: CPU, GPU and VRAM as a share of the
+/// whole, Disk in bytes/s. A sleeping GPU has none.
+fn readings(s: &Snapshot) -> [Option<f32>; 4] {
+    [
+        Some(s.cpu_used / s.cpu_cores.max(1) as f32),
+        s.nvidia_percent
+            .filter(|_| !s.gpu_asleep)
+            .map(|p| p / 100.0),
+        s.vram.map(|(used, total)| share(used, total)),
+        Some(s.disk_per_s as f32),
+    ]
+}
+
+fn tile(name: &str, value: String, unit: String, graph: Option<(&History, Measure)>) -> Tile {
+    let (line, area) = graph
+        .map(|(h, measure)| h.graph(measure))
+        .unwrap_or_default();
+    Tile {
+        name: name.into(),
+        value: value.into(),
+        unit: unit.into(),
+        graphed: graph.is_some(),
+        line: line.into(),
+        area: area.into(),
+    }
+}
+
+fn tiles(s: &Snapshot, history: &History) -> Vec<Tile> {
+    let mut tiles = vec![tile(
+        "CPU",
+        format!("{:.1}", s.cpu_used),
+        format!("of {} cores", s.cpu_cores),
+        Some((history, Measure::Cpu)),
+    )];
+    // A sleeping GPU keeps its tiles, saying so in place of the figures and graphs not read (no
+    // value: the words need the tile's width).
     if let Some(nvidia) = s.nvidia_percent {
         let (value, nvidia_unit) = if s.gpu_asleep {
             (String::new(), "NVIDIA asleep")
         } else {
             (percent(nvidia), "NVIDIA")
         };
-        tiles.push(Tile {
-            name: "GPU".into(),
-            value: value.into(),
-            unit: match s.intel_percent {
-                Some(intel) => format!("{nvidia_unit} · {} Intel", percent(intel)),
-                None => nvidia_unit.into(),
-            }
-            .into(),
-            fraction: if s.gpu_asleep { 0.0 } else { nvidia / 100.0 },
-        });
+        let unit = match s.intel_percent {
+            Some(intel) => format!("{nvidia_unit} · {} Intel", percent(intel)),
+            None => nvidia_unit.into(),
+        };
+        let graph = (!s.gpu_asleep).then_some((history, Measure::Gpu));
+        tiles.push(tile("GPU", value, unit, graph));
     }
     if let Some((used, total)) = s.vram {
-        tiles.push(Tile {
-            name: "VRAM".into(),
-            value: format!("{:.1}", used as f64 / GB).into(),
-            unit: format!("of {:.1} GB", total as f64 / GB).into(),
-            fraction: share(used, total),
-        });
+        tiles.push(tile(
+            "VRAM",
+            format!("{:.1}", used as f64 / GB),
+            format!("of {:.1} GB", total as f64 / GB),
+            Some((history, Measure::Vram)),
+        ));
     } else if s.gpu_asleep {
-        tiles.push(Tile {
-            name: "VRAM".into(),
-            value: "".into(),
-            unit: "GPU asleep".into(),
-            fraction: 0.0,
-        });
+        tiles.push(tile("VRAM", String::new(), "GPU asleep".into(), None));
     }
-    tiles.push(Tile {
-        name: "Disk".into(),
-        value: format!("{:.1}", s.disk_per_s as f64 / MB).into(),
-        unit: "MB/s read + write".into(),
-        fraction: -1.0,
-    });
+    tiles.push(tile(
+        "Disk",
+        format!("{:.1}", s.disk_per_s as f64 / MB),
+        "MB/s read + write".into(),
+        Some((history, Measure::Disk)),
+    ));
     tiles
 }
 
@@ -1173,6 +1197,9 @@ mod tests {
             .collect();
         assert!(tiles.contains(&("GPU", "", "NVIDIA asleep · 3% Intel")));
         assert!(tiles.contains(&("VRAM", "", "GPU asleep")));
+        // Their graphs go; CPU and Disk keep theirs.
+        let graphed: Vec<_> = asleep.tiles.iter().map(|t| t.graphed).collect();
+        assert_eq!(graphed, [true, false, false, true]);
         assert!(
             asleep
                 .rows
