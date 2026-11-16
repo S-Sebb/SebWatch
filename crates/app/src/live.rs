@@ -341,7 +341,7 @@ impl Reader {
             gpu_asleep: asleep,
             nvidia_unavailable: unavailable,
             disk_per_s,
-            pressure: memory::pressure(Path::new(PROC_ROOT)),
+            pressure: pressure(),
             zswap: memory::zswap(Path::new(PROC_ROOT), Path::new("/sys")),
             unsplit: None,
         })
@@ -384,7 +384,7 @@ impl Reader {
             gpu_asleep: asleep,
             nvidia_unavailable: unavailable,
             disk_per_s,
-            pressure: memory::pressure(Path::new(PROC_ROOT)),
+            pressure: pressure(),
             zswap: memory::zswap(Path::new(PROC_ROOT), Path::new("/sys")),
             unsplit: Some(Unsplit {
                 swap_used: swap_total.saturating_sub(swap_free),
@@ -453,6 +453,19 @@ fn main_process(pid: u32) -> Option<String> {
     let dir = Path::new(PROC_ROOT).join(pid.to_string());
     let comm = std::fs::read_to_string(dir.join("comm")).ok()?;
     Some(processes::full_name(&dir, comm.trim_end_matches('\n')))
+}
+
+/// Memory pressure, `some avg10`. Debug builds take `SEBWATCH_PRESSURE` instead when it is set,
+/// so `scripts/a11y` can show the high-pressure chip.
+fn pressure() -> Option<f64> {
+    #[cfg(debug_assertions)]
+    if let Some(p) = std::env::var("SEBWATCH_PRESSURE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return Some(p);
+    }
+    memory::pressure(Path::new(PROC_ROOT))
 }
 
 /// `SwapTotal` and `SwapFree` from /proc/meminfo; 0 without swap.
