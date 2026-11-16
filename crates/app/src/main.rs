@@ -38,6 +38,7 @@ fn show(window: &MainWindow, shown: model::Shown) {
     window.set_sort_column(shown.sort.column as i32);
     window.set_sort_ascending(shown.sort.ascending);
     window.set_filtered(shown.filtered.into());
+    window.set_current(shown.focus);
 }
 
 /// Shows a new reading.
@@ -45,8 +46,8 @@ fn present(window: &MainWindow, snapshot: model::Snapshot) {
     VIEW.with_borrow_mut(|view| show(window, view.update(snapshot)));
 }
 
-/// Art, the first reading, expanding rows, sorting and searching: everything but the desktop and the reader
-/// thread. `toggled` gets the expanded apps' keys whenever an app is expanded or folded, `sorted`
+/// Art, the first reading, clicks and keys in the table, sorting and searching: everything but
+/// the desktop and the reader thread. `toggled` gets the expanded apps' keys whenever an app is expanded or folded, `sorted`
 /// the new order after a click on a column's header.
 fn setup(
     window: &MainWindow,
@@ -77,15 +78,26 @@ fn setup(
             show(&weak.unwrap(), view.render());
         });
     });
-    let weak = window.as_weak();
-    window.on_toggle(move |key| {
-        let expanded = VIEW.with_borrow_mut(|view| {
-            view.toggle(&key);
-            show(&weak.unwrap(), view.render());
-            view.expanded().clone()
-        });
-        toggled(expanded);
+    // Applies a click or key to the view and shows the result.
+    let act = {
+        let weak = window.as_weak();
+        move |act: &dyn Fn(&mut model::View) -> bool| {
+            let expanded = VIEW.with_borrow_mut(|view| {
+                let changed = act(view);
+                show(&weak.unwrap(), view.render());
+                changed.then(|| view.expanded().clone())
+            });
+            if let Some(expanded) = expanded {
+                toggled(expanded);
+            }
+        }
+    };
+    let act = Rc::new(act);
+    window.on_pick({
+        let act = act.clone();
+        move |index| act(&|view| view.pick(index as usize))
     });
+    window.on_key(move |key| act(&|view| view.press(key)));
 }
 
 /// The reader thread: reads every 2 s while the window draws (`drawn`, set on each frame; `None`

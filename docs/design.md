@@ -50,6 +50,16 @@ Top to bottom:
 
 It refreshes every 2 s while visible and does nothing while minimised or hidden.
 
+**Keyboard and screen readers.** Tab reaches the menu button and the table. In the table, Up
+and Down move the focus, Home and End go to the ends, Right and Left (or Enter and Space)
+expand and fold; the focus follows its app when a refresh reorders the rows. The menu opens
+with Enter, Space or Down; its items take the arrows, Enter and Escape. The focused item has
+Breeze's 1 px accent frame inside it (2 px and square in SebChat), shown after a key, not after
+a click. Rows, bar segments, tiles, the menu button and the menu's items have accessible roles
+and names; because AT-SPI through AccessKit 0.24 carries no text values or expanded state, the
+values, a segment's tooltip and "expanded" or "collapsed" are in the description.
+`scripts/a11y` checks the AT-SPI tree on a headless KWin.
+
 ## Footprint
 
 Measured 2026-11-16 on Seb's laptop (i7-11800H, RTX 3070 Laptop GPU on driver 620.70.06,
