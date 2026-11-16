@@ -68,7 +68,7 @@ Apps plus Free, Zswap pool and Kernel and drivers sum exactly to `MemTotal`; swa
 | Free | `MemFree` |
 | Zswap pool | `Zswap` minus every app's `zswap`: only the part of the compressed pool no app accounts for (each app's share is already in its RAM in use; `Zswapped` is how much the pool holds) |
 | Kernel and drivers | `MemTotal - MemFree - Zswap pool - sum(apps' RAM in use + file cache)`: memory no cgroup is charged for (boot allocations, root page cache, GPU driver memory) |
-| Available | `MemAvailable`, for the summary sentence |
+| Available | `MemAvailable` |
 | Pressure | `/proc/pressure/memory`, `some avg10` |
 
 ## CPU and disk
@@ -106,3 +106,26 @@ the cgroup root, the same key the memory numbers use.
   each app's numbers are the sum over its processes.
 - **Intel / AMD**: DRM fdinfo (`/proc/<pid>/fdinfo/*` with `drm-driver`): `drm-engine-*`
   busy time and `drm-memory-*` / `drm-resident-*` per client, deduplicated by `drm-client-id`.
+
+## In the window (`crates/app/src/model.rs`, `live.rs`)
+
+- **RAM bar**: the five biggest apps in their own colours, then Other apps (the rest's RAM in
+  use), Zswap pool, File cache (every app's file cache), Kernel and drivers and Free; the
+  shares add up to `MemTotal`. A colour stays with its app while it is in the top five.
+- **Swap bar**: the same five apps' swap, Other apps, and free swap (`SwapTotal` minus every
+  app's swap).
+- **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the same five apps' VRAM (each app's
+  processes summed over its groups), Other apps, Driver and other (used VRAM minus every app's:
+  the driver, contexts and processes NVML doesn't list) and Free (total minus used). Apps without
+  VRAM are left out. A sleeping GPU isn't read, so its bar shows empty with "GPU asleep"; without
+  an NVIDIA GPU there is no bar.
+- A segment of at least 7.5% of its bar shows its size inside; a smaller one shows it in the
+  legend.
+- Sizes are binary with KDE's short names (1 GB = 1024 MB); a unit steps up at 1000 of the one
+  below, so no figure has four digits.
+- CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %;
+  a sleeping NVIDIA GPU shows 0% and no VRAM tile. Disk tile: every app's read + write.
+- An expanded app reads its processes (`processes.rs`) only while expanded; its rows plus
+  "Kernel memory and zswap (not per process)" sum to its RAM in use. That row's swap is the
+  app's swap minus its processes' swap. An app of several groups lists each group, then its
+  processes; disk is known per group, so a process shows none.

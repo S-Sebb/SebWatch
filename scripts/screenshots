@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Draw the main window offscreen in each theme and save PNGs in the given folder.
+# Uses Slint's software renderer: needs no display and shows nothing on screen.
+set -eu
+cd "$(dirname "$0")/.."
+[ $# -eq 1 ] || { echo "usage: scripts/screenshots <output folder>"; exit 1; }
+SEBWATCH_SHOTS=$(realpath -m "$1") cargo test -p sebwatch --bin sebwatch screenshots -- --ignored --exact screenshots::screenshots

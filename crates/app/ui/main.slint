@@ -1,8 +1,701 @@
+import { ListView } from "std-widgets.slint";
+import { Theme, ThemeChoice, Art, SegmentKind, SegmentFill, Swatch, Dashed, Card, Chevron } from "theme.slint";
+
+export { Theme, ThemeChoice, Art, SegmentKind }
+
+// One part of the RAM or swap bar.
+export struct Segment {
+    kind: SegmentKind,
+    // The app's series colour, 0 to 4; only for kind app.
+    series: int,
+    name: string,
+    // Shown after the name in the tooltip, e.g. "· guide35".
+    detail: string,
+    // Share of the bar; a bar's fractions add up to 1.
+    fraction: float,
+    // The fractions of the segments before it.
+    start: float,
+    // The size, e.g. "2.7 GB": in the segment when labelled, else in the legend.
+    size: string,
+    labelled: bool,
+    // The tooltip's first line, then its muted lines.
+    tip: string,
+    notes: [string],
+}
+
+export struct Bar {
+    title: string,
+    total: string,
+    segments: [Segment],
+}
+
+export struct Tile {
+    name: string,
+    value: string,
+    unit: string,
+    // The meter's fill, 0 to 1; below 0 for no meter.
+    fraction: float,
+}
+
+export enum RowKind { app, group, process, kernel, more }
+
+// A table row: an app, one of an expanded app's processes or child groups, its kernel share,
+// or the fold holding the rest. Absent values are "—".
+export struct Row {
+    kind: RowKind,
+    // 0 for an app, 1 under it, 2 for a process under one of its groups.
+    depth: int,
+    key: string,
+    name: string,
+    detail: string,
+    // The app's colour in the bars, or -1 when it has none.
+    series: int,
+    icon: image,
+    expanded: bool,
+    ram: string,
+    swap: string,
+    cache: string,
+    cpu: string,
+    disk: string,
+    gpu: string,
+    vram: string,
+}
+
+component Label inherits Text {
+    color: Theme.fg;
+    vertical-alignment: center;
+}
+
+component Muted inherits Label {
+    color: Theme.muted;
+}
+
+component SectionTitle inherits Label {
+    font-family: Theme.title-font;
+    font-size: Theme.title-size;
+    font-weight: Theme.title-weight;
+}
+
+component SegmentBar {
+    in property <[Segment]> segments;
+    in property <length> gap: 2px;
+    property <length> share: self.width - (self.segments.length - 1) * self.gap;
+    property <int> hovered: -1;
+    height: 28px;
+
+    // An empty bar: a sleeping GPU's VRAM, not read so as not to wake it.
+    if root.segments.length == 0: Dashed {
+        width: 100%;
+        height: 100%;
+    }
+
+    for s[i] in root.segments: Rectangle {
+            x: s.start * root.share + i * root.gap;
+            width: s.fraction * root.share;
+            border-radius: Theme.radius;
+            clip: true;
+            background: SegmentFill.color(s.kind, s.series);
+            if s.kind == SegmentKind.cache: Image {
+                width: 100%;
+                height: 100%;
+                source: Art.hatch;
+                colorize: Theme.hatch;
+                horizontal-tiling: repeat;
+                vertical-tiling: repeat;
+            }
+            if s.kind == SegmentKind.free: Dashed {
+                width: 100%;
+                height: 100%;
+            }
+            if s.labelled: Label {
+                x: 6px;
+                text: s.size;
+                font-size: Theme.small;
+                color: SegmentFill.ink(s.kind, s.series);
+            }
+    }
+
+    // The hover ring and tooltip, laid out over the segments so a ring is drawn above both neighbours.
+    for s[i] in root.segments: Rectangle {
+            x: s.start * root.share + i * root.gap;
+            width: s.fraction * root.share;
+            if touch.has-hover: Rectangle {
+                x: Theme.picnic ? -4px : -3px;
+                y: self.x;
+                width: parent.width - 2 * self.x;
+                height: parent.height - 2 * self.y;
+                border-radius: Theme.picnic ? 0 : Theme.radius + 3px;
+                border-width: 1px;
+                border-color: Theme.fg;
+                Rectangle {
+                    x: Theme.picnic ? 0 : 1px;
+                    y: self.x;
+                    width: parent.width - 2 * self.x;
+                    height: parent.height - 2 * self.y;
+                    border-radius: Theme.picnic ? 0 : Theme.radius + 2px;
+                    border-width: Theme.picnic ? 2px : 2px;
+                    border-color: Theme.picnic ? Theme.fg : Theme.bg;
+                    Rectangle {
+                        x: 2px;
+                        y: 2px;
+                        width: parent.width - 4px;
+                        height: parent.height - 4px;
+                        visible: Theme.picnic;
+                        border-width: 2px;
+                        border-color: Theme.view;
+                    }
+                }
+            }
+            touch := TouchArea { }
+
+            Tooltip {
+                Rectangle {
+                    background: Theme.popup;
+                    border-width: 1px;
+                    border-color: Theme.picnic ? Theme.outline : Theme.line;
+                    border-radius: Theme.picnic ? 0 : 4px;
+                    drop-shadow-blur: Theme.picnic ? 0 : 10px;
+                    drop-shadow-offset-y: 3px;
+                    drop-shadow-offset-x: Theme.picnic ? 3px : 0;
+                    drop-shadow-color: Theme.picnic ? #5B331C30 : #00000040;
+                    VerticalLayout {
+                        padding-left: Theme.picnic ? 10px : 9px;
+                        padding-right: self.padding-left;
+                        padding-top: Theme.picnic ? 8px : 6px;
+                        padding-bottom: self.padding-top;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                Swatch {
+                                    kind: s.kind;
+                                    series: s.series;
+                                }
+                            }
+                            Label {
+                                text: s.detail == "" ? s.name : s.name + " " + s.detail;
+                                font-size: Theme.small;
+                                font-weight: Theme.picnic ? 800 : 700;
+                            }
+                        }
+                        Label {
+                            text: s.tip;
+                            font-size: Theme.small;
+                        }
+                        for note in s.notes: Muted {
+                            text: note;
+                            font-size: Theme.small;
+                        }
+                    }
+                }
+            }
+    }
+}
+
+component BarView {
+    in property <Bar> bar;
+    vertical-stretch: 0;
+    VerticalLayout {
+        spacing: 5px;
+        HorizontalLayout {
+            SectionTitle {
+                text: root.bar.title;
+            }
+            Muted {
+                text: root.bar.total;
+                horizontal-alignment: right;
+                vertical-alignment: bottom;
+            }
+        }
+        SegmentBar {
+            segments: root.bar.segments;
+        }
+        // An empty FlexboxLayout limits the column's width to almost nothing.
+        if root.bar.segments.length > 0: FlexboxLayout {
+            padding-top: 2px;
+            spacing-horizontal: 14px;
+            spacing-vertical: 4px;
+            for s in root.bar.segments: HorizontalLayout {
+                spacing: 5px;
+                VerticalLayout {
+                    alignment: center;
+                    Swatch {
+                        kind: s.kind;
+                        series: s.series;
+                    }
+                }
+                Label {
+                    text: s.labelled ? s.name : s.name + "  " + s.size;
+                    font-size: Theme.small;
+                }
+            }
+        }
+    }
+}
+
+component TileView inherits Card {
+    in property <Tile> tile;
+    inset: 12px;
+    Rectangle {
+        background: Theme.picnic ? transparent : Theme.view;
+        border-width: Theme.picnic ? 0 : 1px;
+        border-color: Theme.line;
+        border-radius: 5px;
+        VerticalLayout {
+            padding-left: Theme.picnic ? 0 : 10px;
+            padding-right: self.padding-left;
+            padding-top: Theme.picnic ? 0 : 7px;
+            padding-bottom: Theme.picnic ? 0 : 9px;
+            spacing: 2px;
+            Muted {
+                text: root.tile.name;
+                font-size: Theme.small;
+                font-weight: Theme.picnic ? 800 : 400;
+            }
+            HorizontalLayout {
+                spacing: 5px;
+                alignment: start;
+                Label {
+                    text: root.tile.value;
+                    font-family: Theme.picnic ? "Jersey 10" : "";
+                    font-weight: Theme.picnic ? 400 : 400;
+                    font-size: Theme.picnic ? 26px : 17.33px;
+                    vertical-alignment: bottom;
+                }
+                Muted {
+                    text: root.tile.unit;
+                    font-size: Theme.small;
+                    vertical-alignment: bottom;
+                    // Sits on the value's baseline.
+                    height: Theme.picnic ? 24px : 22px;
+                }
+            }
+            if root.tile.fraction >= 0: Rectangle {
+                height: Theme.picnic ? 6px : 4px;
+                background: Theme.track;
+                border-radius: Theme.picnic ? 0 : 2px;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * Math.clamp(root.tile.fraction, 0, 1);
+                    background: Theme.accent;
+                    border-radius: parent.border-radius;
+                }
+                // Breeze leaves a little air above the meter.
+            }
+        }
+    }
+}
+
+// The settings menu: for now only the theme.
+component MenuButton {
+    property <[{choice: ThemeChoice, name: string, note: string}]> choices: [
+        { choice: ThemeChoice.system, name: "System", note: "(follows the desktop)" },
+        { choice: ThemeChoice.light, name: "Light", note: "" },
+        { choice: ThemeChoice.dark, name: "Dark", note: "" },
+        { choice: ThemeChoice.sebchat, name: "SebChat", note: "" },
+    ];
+    callback chosen(ThemeChoice);
+    width: 30px;
+    height: 30px;
+    accessible-role: button;
+    accessible-label: "Menu";
+    accessible-action-default => {
+        menu.show();
+    }
+
+    Rectangle {
+        background: touch.pressed ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+        border-radius: Theme.picnic ? 0 : 3px;
+        border-width: touch.has-hover && !Theme.picnic ? 1px : 0;
+        border-color: Theme.accent;
+    }
+
+    // Three lines; square pixels in SebChat.
+    for i in 3: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: (root.height - 12px) / 2 + i * (Theme.picnic ? 5px : 5px) ;
+        width: 16px;
+        height: Theme.picnic ? 3px : 1.5px;
+        background: Theme.fg;
+    }
+    touch := TouchArea {
+        clicked => {
+            menu.show();
+        }
+    }
+
+    menu := PopupWindow {
+        x: root.width - 230px;
+        y: root.height + 2px;
+        width: 230px;
+        Rectangle {
+            background: Theme.popup;
+            border-width: Theme.picnic ? 3px : 1px;
+            border-color: Theme.picnic ? Theme.outline : Theme.line;
+            border-radius: Theme.picnic ? 0 : 4px;
+            drop-shadow-blur: Theme.picnic ? 0 : 10px;
+            drop-shadow-offset-y: 3px;
+            drop-shadow-offset-x: Theme.picnic ? 3px : 0;
+            drop-shadow-color: Theme.picnic ? #5B331C30 : #00000040;
+            VerticalLayout {
+                padding: Theme.picnic ? 7px : 4px;
+                spacing: 0;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    height: 24px;
+                    Muted {
+                        text: "Theme";
+                        font-size: Theme.small;
+                        font-weight: Theme.picnic ? 800 : 400;
+                    }
+                }
+                for c in root.choices: Rectangle {
+                    height: 26px;
+                    border-radius: Theme.picnic ? 0 : 3px;
+                    background: Theme.choice == c.choice ? Theme.selection : item.has-hover ? Theme.hover : transparent;
+                    Label {
+                        x: 9px;
+                        text: Theme.choice == c.choice ? "✓" : "";
+                    }
+                    HorizontalLayout {
+                        padding-left: 26px;
+                        spacing: 4px;
+                        alignment: start;
+                        Label {
+                            text: c.name;
+                        }
+                        Muted {
+                            text: c.note;
+                        }
+                    }
+                    item := TouchArea {
+                        clicked => {
+                            Theme.choice = c.choice;
+                            root.chosen(c.choice);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Table column widths after the stretching name column.
+global Columns {
+    out property <[length]> widths: [110px, 112px, 90px, 94px, 84px, 46px, 60px];
+    out property <[string]> titles: ["RAM in use", "Swapped out", "File cache", "CPU (cores)", "Disk", "GPU", "VRAM"];
+}
+
+component Cell inherits Label {
+    in property <int> column;
+    width: Columns.widths[self.column];
+    horizontal-alignment: right;
+    color: self.text == "—" ? Theme.muted : Theme.fg;
+}
+
+component RowView inherits Rectangle {
+    in property <Row> entry;
+    in property <bool> odd;
+    in property <bool> selected;
+    callback clicked();
+    property <bool> top: self.entry.kind == RowKind.app || self.entry.kind == RowKind.more;
+    property <length> small: Theme.picnic && !self.top ? Theme.small : Theme.font-size;
+    height: Theme.picnic ? 31px : 28px;
+    background: self.selected ? Theme.selection : self.odd && !Theme.picnic ? Theme.alt : transparent;
+
+    if Theme.picnic: Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 6px;
+            padding-left: root.top ? 0 : 74px + (root.entry.depth - 1) * 16px;
+            if root.top: VerticalLayout {
+                alignment: center;
+                Chevron {
+                    open: root.entry.expanded;
+                }
+            }
+            if root.top: VerticalLayout {
+                alignment: center;
+                Swatch {
+                    kind: SegmentKind.app;
+                    series: root.entry.series;
+                    opacity: root.entry.series >= 0 ? 1 : 0;
+                }
+            }
+            if root.top: VerticalLayout {
+                alignment: center;
+                Image {
+                    width: 22px;
+                    height: 22px;
+                    source: root.entry.icon;
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                Label {
+                    text: root.entry.name;
+                    font-size: root.small;
+                    color: root.entry.kind == RowKind.kernel || root.entry.kind == RowKind.more ? Theme.muted : Theme.fg;
+                    font-weight: root.entry.kind == RowKind.group ? (Theme.picnic ? 800 : 700) : Theme.weight;
+                    overflow: elide;
+                }
+                Muted {
+                    text: root.entry.detail;
+                    font-size: root.small;
+                }
+            }
+        }
+        Cell {
+            column: 0;
+            text: root.entry.ram;
+            font-size: root.small;
+            color: root.entry.kind == RowKind.more ? Theme.muted : Theme.fg;
+        }
+        Cell {
+            column: 1;
+            text: root.entry.swap;
+            font-size: root.small;
+        }
+        Cell {
+            column: 2;
+            text: root.entry.cache;
+            font-size: root.small;
+        }
+        Cell {
+            column: 3;
+            text: root.entry.cpu;
+            font-size: root.small;
+        }
+        Cell {
+            column: 4;
+            text: root.entry.disk;
+            font-size: root.small;
+        }
+        Cell {
+            column: 5;
+            text: root.entry.gpu;
+            font-size: root.small;
+        }
+        Cell {
+            column: 6;
+            text: root.entry.vram;
+            font-size: root.small;
+        }
+    }
+
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Table {
+    in property <[Row]> rows;
+    in-out property <string> selected;
+    callback toggle(string);
+
+    VerticalLayout {
+        if Theme.picnic: HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-bottom: 4px;
+            SectionTitle {
+                text: "Apps";
+            }
+            Muted {
+                text: "sorted by RAM in use";
+                font-size: Theme.small;
+                font-weight: 800;
+                horizontal-alignment: right;
+            }
+        }
+        // The header: Breeze's column dividers, or SebChat's small muted labels over a thick line.
+        Rectangle {
+            height: Theme.picnic ? 31px : 29px;
+            background: Theme.picnic ? transparent : Theme.view;
+            Rectangle {
+                y: 0;
+                height: 1px;
+                visible: !Theme.picnic;
+                background: Theme.line;
+            }
+            Rectangle {
+                y: parent.height - self.height;
+                height: Theme.picnic ? 3px : 1px;
+                background: Theme.line;
+            }
+            HorizontalLayout {
+                Rectangle {
+                    horizontal-stretch: 1;
+                    Label {
+                        x: 8px;
+                        text: "Name";
+                        font-size: Theme.picnic ? Theme.small : Theme.font-size;
+                        font-weight: Theme.picnic ? 800 : 400;
+                        color: Theme.picnic ? Theme.muted : Theme.fg;
+                    }
+                }
+                for title[i] in Columns.titles: Rectangle {
+                    width: Columns.widths[i];
+                    Rectangle {
+                        x: -1px;
+                        width: 1px;
+                        y: 1px;
+                        height: parent.height - 2px;
+                        visible: !Theme.picnic;
+                        background: Theme.line;
+                    }
+                    HorizontalLayout {
+                        padding-right: 8px;
+                        spacing: 4px;
+                        alignment: end;
+                        Label {
+                            text: title;
+                            font-size: Theme.picnic ? Theme.small : Theme.font-size;
+                            font-weight: Theme.picnic ? 800 : 400;
+                            color: Theme.picnic ? Theme.muted : Theme.fg;
+                        }
+                        // Sorted by RAM in use.
+                        if i == 0: VerticalLayout {
+                            alignment: center;
+                            Chevron {
+                                width: 10px;
+                                height: 10px;
+                                open: true;
+                                color: Theme.picnic ? Theme.muted : Theme.fg;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ListView {
+            for row[i] in root.rows: RowView {
+                entry: row;
+                odd: Math.mod(i, 2) == 1;
+                selected: row.key == root.selected && row.kind == RowKind.app;
+                clicked => {
+                    if row.kind == RowKind.app || row.kind == RowKind.more {
+                        root.selected = row.key;
+                        root.toggle(row.key);
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
+    in property <Bar> memory;
+    in property <Bar> swap;
+    // No NVIDIA GPU: no VRAM bar.
+    in property <bool> has-vram;
+    in property <Bar> vram;
+    in property <[Tile]> tiles;
+    in property <[Row]> rows;
+    in-out property <string> selected;
+    callback toggle(string);
+    callback theme-chosen(ThemeChoice);
+
     in property <string> version;
 
-    title: "SebWatch " + version;
+    title: "SebWatch " + root.version;
     icon: @image-url("../../../art/icons/hicolor/256x256/apps/sebwatch.png");
-    preferred-width: 900px;
-    preferred-height: 640px;
+    preferred-width: 1000px;
+    preferred-height: 850px;
+    min-width: 760px;
+    min-height: 480px;
+    background: Theme.bg;
+    default-font-family: Theme.font;
+    default-font-size: Theme.font-size;
+    default-font-weight: Theme.weight;
+
+    if Theme.picnic: Image {
+        width: 100%;
+        height: 100%;
+        source: Art.cloth;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
+        image-rendering: pixelated;
+    }
+
+    VerticalLayout {
+        padding-top: 14px;
+        spacing: Theme.picnic ? 22px : 14px;
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: Theme.picnic ? 22px : 16px;
+            vertical-stretch: 0;
+            // The bars' card runs as deep as the tiles beside it.
+            Card {
+                BarView {
+                    bar: root.memory;
+                }
+                Rectangle {
+                    height: Theme.picnic ? 18px : 14px;
+                }
+                BarView {
+                    bar: root.swap;
+                }
+                if root.has-vram: Rectangle {
+                    height: Theme.picnic ? 18px : 14px;
+                }
+                if root.has-vram: BarView {
+                    bar: root.vram;
+                }
+                Rectangle { }
+            }
+            VerticalLayout {
+                width: 180px;
+                alignment: start;
+                spacing: Theme.picnic ? 14px : 8px;
+                HorizontalLayout {
+                    alignment: end;
+                    MenuButton {
+                        chosen(choice) => {
+                            root.theme-chosen(choice);
+                        }
+                    }
+                }
+                for tile in root.tiles: TileView {
+                    tile: tile;
+                }
+            }
+        }
+        // Breeze: the table runs edge to edge. SebChat: a card like the others.
+        HorizontalLayout {
+            padding-left: Theme.picnic ? 16px : 0;
+            padding-right: Theme.picnic ? 19px : 0;
+            padding-bottom: Theme.picnic ? 19px : 0;
+            vertical-stretch: 1;
+            Card {
+                inset: 0;
+                VerticalLayout {
+                    padding-top: Theme.picnic ? 12px : 0;
+                    padding-bottom: Theme.picnic ? 6px : 0;
+                    padding-left: Theme.picnic ? 3px : 0;
+                    padding-right: Theme.picnic ? 3px : 0;
+                    Table {
+                        rows: root.rows;
+                        selected <=> root.selected;
+                        toggle(key) => {
+                            root.toggle(key);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -17,3 +17,8 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   no system changes; most important items first, each a short bold sentence then a few
   concise explanatory sentences in regular text; other items just concise sentences. Format
   and steps in `docs/release.md`. Seb, 2026-11-15.
+- **Main window layout (mockup approved, issue #5):** no summary sentences; the window starts
+  with the RAM, swap and VRAM bars, headline tiles (CPU, GPU, VRAM, disk) beside them; the theme
+  switcher (System, Light, Dark, SebChat; System follows the desktop's light/dark) in a menu
+  behind a menu button, remembered between runs; the SebChat theme keeps the desktop's own title
+  bar. Seb, 2026-11-15; summary removed and VRAM bar added by Seb, 2026-11-16.
