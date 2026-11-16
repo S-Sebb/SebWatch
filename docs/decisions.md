@@ -10,7 +10,9 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   Dark (looking at home next to the long-established KDE apps on Seb's PC), and one close to
   SebChat's theme. The default follows the system's light/dark. Seb, 2026-11-15.
 - **Rust, not C++/Qt:** UI in Slint, like SebChat's PC app. Seb, 2026-11-15.
-- **Live only, no history.** Seb, 2026-11-15.
+- **Live only, no recorded history.** Seb, 2026-11-15. Exception: the CPU, GPU, VRAM and Disk
+  tiles show the last minute as a small graph, kept in memory only, never saved, and paused while
+  minimised (Seb chose history graphs for the tiles, 2026-11-16).
 - **Core question the app answers:** "here is where your 12 GB of 16 GB RAM went", with app
   sums that add up and background things such as Android emulators visible. Seb, 2026-11-15.
 - **Patch notes with every release:** three sections, New, Improved, Fixes; for users only,

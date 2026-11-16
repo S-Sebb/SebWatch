@@ -40,7 +40,7 @@
   emulator started as a background service, or a build an agent spawned, counts toward the app
   that started it.
 - **Live.** It refreshes every 2 seconds while you look at it and does nothing while minimised.
-  No history is recorded.
+  Nothing is recorded: the tiles' small graphs keep only the last minute, in memory.
 - **No daemon, no root.** Everything comes from files a normal user can read.
 - **At home on KDE Plasma.** Breeze Light and Breeze Dark follow the desktop's light or dark, or
   pick the SebChat theme from the menu.
