@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use sebwatch_core::cpu_io::{self, Rates, Sample};
 use sebwatch_core::memory::{self, CGROUP_ROOT, PROC_ROOT};
-use sebwatch_core::naming::Naming;
+use sebwatch_core::naming::{AppName, Naming, SERVICE_ICON};
 use sebwatch_core::nvidia::{self, Nvidia};
 use sebwatch_core::processes;
 
@@ -57,9 +57,18 @@ impl Reader {
         self.drills.retain(|key, _| expanded.contains(key));
         let mut apps = Vec::new();
         for app in &mem.apps {
-            let first = app.cgroups.first().cloned().unwrap_or_default();
-            let main = main_process(&root.join(&first));
-            let named = self.naming.name(&first, main.as_deref()).clone();
+            // The closed-apps entry has no groups to name it by.
+            let named = match app.cgroups.first() {
+                Some(first) => {
+                    let main = main_process(&root.join(first));
+                    self.naming.name(first, main.as_deref()).clone()
+                }
+                None => AppName {
+                    name: app.name.clone(),
+                    icon: SERVICE_ICON.into(),
+                    agents: false,
+                },
+            };
             let usage = |f: fn(&nvidia::AppUsage) -> f64| {
                 let gpu = gpu.as_ref()?;
                 let used: Vec<_> = app.cgroups.iter().filter_map(|g| gpu.apps.get(g)).collect();
@@ -108,7 +117,7 @@ impl Reader {
                 key: app.name.clone(),
                 name: named.name,
                 detail: match (app.cgroups.len(), named.agents) {
-                    (1, _) => String::new(),
+                    (0 | 1, _) => String::new(),
                     (n, true) => format!("{n} agents"),
                     (n, false) => format!("{n} groups"),
                 },

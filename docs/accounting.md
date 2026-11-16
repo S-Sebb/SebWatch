@@ -16,6 +16,15 @@ parent's group, so a build an agent starts is charged to that agent.
   nearest of these groups or their ancestors that has `memory.stat` (a child without the memory
   controller, such as `systemd-udevd.service/udev`, is charged to its parent), each such group
   once.
+- **Groups without processes**: the same walk lists them. Linux keeps charging a group for
+  memory its exited processes left behind (mostly page cache, also tmpfs files and kernel
+  objects), and removing a group moves its charges to its parent, so slices hold some too.
+  Each such group with `memory.stat` counts only its own share: its `memory.stat` (and
+  `memory.swap.current`) minus its memory children's, field by field, floored at 0 (parent and
+  children are read moments apart). That share goes to the running app whose groups are the
+  only ones in the nearest enclosing group that has any (a Steam slice with an exited helper
+  scope: Steam), otherwise to one entry, **Closed apps (cache)** (`memory::CLOSED_APPS`), with
+  no groups, named and iconed as a background service.
 - **Grouping**: several groups can belong to one app (each Claude agent gets its own scope,
   T3 Code has an AppImage service and a scope). Group them by `naming::clean_name`: strip the
   `.scope/.service/.slice` suffix, the template instance (`@autostart`, `@<id>`), the `app-`,
@@ -75,7 +84,7 @@ Apps plus Free, Zswap pool and Kernel and drivers sum exactly to `MemTotal`; swa
 |---|---|
 | Free | `MemFree` |
 | Zswap pool | `Zswap` minus every app's `zswap`: only the part of the compressed pool no app accounts for (each app's share is already in its RAM in use; `Zswapped` is how much the pool holds) |
-| Kernel and drivers | `MemTotal - MemFree - Zswap pool - sum(apps' RAM in use + file cache)`: memory no cgroup is charged for (boot allocations, root page cache, GPU driver memory) |
+| Kernel and drivers | `MemTotal - MemFree - Zswap pool - sum(apps' RAM in use + file cache)` (Closed apps (cache) included): memory no cgroup is charged for (boot allocations, root page cache, GPU driver memory) |
 | Available | `MemAvailable` |
 | Pressure | `/proc/pressure/memory`, `some avg10` |
 
@@ -120,6 +129,9 @@ the cgroup root, the same key the memory numbers use.
 - **RAM bar**: the five biggest apps in their own colours, then Other apps (the rest's RAM in
   use), Zswap pool, File cache (every app's file cache), Kernel and drivers and Free; the
   shares add up to `MemTotal`. A colour stays with its app while it is in the top five.
+- **Closed apps (cache)** is a row like any app, sorted by its RAM in use: its RAM counts in
+  Other apps unless it is in the top five, its cache in File cache. It has no processes, so
+  expanded it shows only "Kernel memory and zswap (not per process)".
 - **Swap bar**: the same five apps' swap, Other apps, and free swap (`SwapTotal` minus every
   app's swap).
 - **VRAM bar** (NVIDIA only, from NVML, `nvidia.rs`): the same five apps' VRAM (each app's

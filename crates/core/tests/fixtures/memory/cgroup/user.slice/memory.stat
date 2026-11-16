@@ -1,8 +1,8 @@
-anon 8000000
-file 8000000
-kernel 8000000
+anon 20600
+file 7800
+kernel 700
 kernel_stack 7
-shmem 0
-zswap 8000000
+shmem 50
+zswap 1200
 zswapped 99999
 file_mapped 3
