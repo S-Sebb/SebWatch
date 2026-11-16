@@ -259,6 +259,27 @@ fn screenshots() {
         crate::present(&ui, crate::sample::unsplit());
         shot.save(&shot.render(), &dir.join(format!("unaccounted-{name}.png")));
 
+        // #36: the narrowest and the shortest window, the minimum size, and the minimum at 2x.
+        crate::present(&ui, crate::sample::snapshot());
+        for (size, width, height, scale_factor) in [
+            ("narrow", 760, 844, 1.0),
+            ("short", 1000, 480, 1.0),
+            ("min", 760, 480, 1.0),
+            ("min-2x", 1520, 960, 2.0),
+        ] {
+            window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor });
+            window.set_size(PhysicalSize::new(width, height));
+            let small = Shot {
+                window: window.clone(),
+                now: now.clone(),
+                width,
+                height,
+            };
+            small.save(&small.render(), &dir.join(format!("{size}-{name}.png")));
+        }
+        window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
+        window.set_size(PhysicalSize::new(shot.width, shot.height));
+
         // Sorted by swap, largest first, then smallest first.
         crate::present(&ui, crate::sample::snapshot());
         toggle(&ui, "Android emulator");

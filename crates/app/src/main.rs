@@ -157,6 +157,23 @@ fn read_loop(
 
 fn main() -> Result<(), slint::PlatformError> {
     let window = MainWindow::new()?;
+    if let Some((width, height)) = settings::size() {
+        window
+            .window()
+            .set_size(slint::LogicalSize::new(width, height));
+    }
+    // The size is saved on closing, unless maximised or full screen.
+    let weak = window.as_weak();
+    window.window().on_close_requested(move || {
+        if let Some(window) = weak.upgrade() {
+            let window = window.window();
+            if !window.is_maximized() && !window.is_fullscreen() {
+                let size = window.size().to_logical(window.scale_factor());
+                settings::save_size((size.width, size.height));
+            }
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
     window.set_version(env!("CARGO_PKG_VERSION").into());
     // Wayland compositors pick the taskbar icon from the desktop entry whose name matches the app id.
     slint::set_xdg_app_id("sebwatch")?;

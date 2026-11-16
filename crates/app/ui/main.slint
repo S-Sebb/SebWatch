@@ -249,6 +249,9 @@ component BarView {
         // An empty FlexboxLayout limits the column's width to almost nothing.
         if root.bar.segments.length > 0: FlexboxLayout {
             padding-top: 2px;
+            // Slint 1.18 lays out the card with too few legend rows at narrow widths (rows then
+            // run into the next title); its own preferred height counts them right.
+            min-height: self.preferred-height;
             spacing-horizontal: 14px;
             spacing-vertical: 4px;
             for s in root.bar.segments: HorizontalLayout {
@@ -863,6 +866,8 @@ component Table {
     }
 
     property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", "GPU", "VRAM"];
+    // The name column keeps 220 px; a narrower window scrolls the table sideways.
+    property <length> content-width: max(self.width, 220px + 596px + 16px);
 
     VerticalLayout {
         // The search line above the table, as in KDE System Monitor; SebChat titles it "Apps".
@@ -912,6 +917,7 @@ component Table {
         Rectangle {
             height: Theme.picnic ? 31px : 29px;
             background: Theme.picnic ? transparent : Theme.view;
+            clip: true;
             Rectangle {
                 y: 0;
                 height: 1px;
@@ -923,7 +929,10 @@ component Table {
                 height: Theme.picnic ? 3px : 1px;
                 background: Theme.line;
             }
+            // Scrolls sideways with the rows.
             HorizontalLayout {
+                x: view.content-x;
+                width: root.content-width;
                 Rectangle {
                     horizontal-stretch: 1;
                     Label {
@@ -1003,8 +1012,9 @@ component Table {
         // the focused row.
         scope := FocusScope {
             visible: !root.unsplit;
-            // Hidden, it takes no room from the message.
-            min-height: 0;
+            // Hidden, it takes no room from the message. A short window keeps about 8 rows; the
+            // page scrolls instead.
+            min-height: root.unsplit ? 0 : 8 * root.row-height;
             max-height: root.unsplit ? 0 : 100000px;
             accessible-role: list;
             accessible-label: "Apps";
@@ -1043,10 +1053,10 @@ component Table {
                 accept
             }
             view := ScrollView {
-                content-width: self.visible-width;
+                content-width: root.content-width;
                 content-height: rows-layout.preferred-height;
                 rows-layout := VerticalLayout {
-                    width: view.visible-width;
+                    width: root.content-width;
                     for row[i] in root.rows: RowView {
                         entry: row;
                         index: i;
@@ -1128,132 +1138,139 @@ export component MainWindow inherits Window {
             }
             reject
         }
-        VerticalLayout {
-            padding-top: 14px;
-            spacing: Theme.picnic ? 22px : 14px;
-            // Readings failing: KDE's inline warning (KMessageWidget) above the bars.
-            if root.warning != "": HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                Rectangle {
-                    accessible-role: text;
-                    accessible-label: "Warning";
-                    accessible-description: root.warning;
-                    background: Theme.warning-bg;
-                    border-width: 1px;
-                    border-color: Theme.warning;
-                    border-radius: Theme.picnic ? 0 : 4px;
-                    HorizontalLayout {
-                        padding: 8px;
-                        padding-left: 10px;
-                        spacing: 9px;
-                        VerticalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: 18px;
-                                height: 18px;
-                                Path {
+        // A window too short for the bars and about 8 table rows scrolls as one page.
+        page := ScrollView {
+            content-width: self.visible-width;
+            content-height: max(self.visible-height, content.min-height);
+            content := VerticalLayout {
+                width: page.visible-width;
+                height: page.content-height;
+                padding-top: 14px;
+                spacing: Theme.picnic ? 22px : 14px;
+                // Readings failing: KDE's inline warning (KMessageWidget) above the bars.
+                if root.warning != "": HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    Rectangle {
+                        accessible-role: text;
+                        accessible-label: "Warning";
+                        accessible-description: root.warning;
+                        background: Theme.warning-bg;
+                        border-width: 1px;
+                        border-color: Theme.warning;
+                        border-radius: Theme.picnic ? 0 : 4px;
+                        HorizontalLayout {
+                            padding: 8px;
+                            padding-left: 10px;
+                            spacing: 9px;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
                                     width: 18px;
                                     height: 18px;
-                                    viewbox-width: 18;
-                                    viewbox-height: 18;
-                                    commands: "M 9 1.5 L 17 16 L 1 16 Z";
-                                    fill: Theme.warning;
-                                }
-                                Text {
-                                    y: 4px;
-                                    height: 12px;
-                                    text: "!";
-                                    color: #ffffff;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
+                                    Path {
+                                        width: 18px;
+                                        height: 18px;
+                                        viewbox-width: 18;
+                                        viewbox-height: 18;
+                                        commands: "M 9 1.5 L 17 16 L 1 16 Z";
+                                        fill: Theme.warning;
+                                    }
+                                    Text {
+                                        y: 4px;
+                                        height: 12px;
+                                        text: "!";
+                                        color: #ffffff;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
                                 }
                             }
-                        }
-                        Label {
-                            text: root.warning;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                }
-            }
-            HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                spacing: Theme.picnic ? 22px : 16px;
-                vertical-stretch: 0;
-                // The bars' card runs as deep as the tiles beside it.
-                Card {
-                    BarView {
-                        bar: root.memory;
-                    }
-                    Rectangle {
-                        height: Theme.picnic ? 18px : 14px;
-                    }
-                    BarView {
-                        bar: root.swap;
-                    }
-                    if root.has-vram: Rectangle {
-                        height: Theme.picnic ? 18px : 14px;
-                    }
-                    if root.has-vram: BarView {
-                        bar: root.vram;
-                    }
-                    Rectangle { }
-                }
-                // The tiles share out the bars' height, so both columns end on the same line.
-                VerticalLayout {
-                    width: 180px;
-                    spacing: Theme.picnic ? 14px : 8px;
-                    HorizontalLayout {
-                        vertical-stretch: 0;
-                        alignment: end;
-                        MenuButton {
-                            chosen(choice) => {
-                                root.theme-chosen(choice);
+                            Label {
+                                text: root.warning;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
                             }
                         }
                     }
-                    for tile in root.tiles: TileView {
-                        tile: tile;
-                    }
                 }
-            }
-            // Breeze: the table runs edge to edge. SebChat: a card like the others.
-            HorizontalLayout {
-                padding-left: Theme.picnic ? 16px : 0;
-                padding-right: Theme.picnic ? 19px : 0;
-                padding-bottom: Theme.picnic ? 19px : 0;
-                vertical-stretch: 1;
-                Card {
-                    inset: 0;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: Theme.picnic ? 22px : 16px;
+                    vertical-stretch: 0;
+                    // The bars' card runs as deep as the tiles beside it.
+                    Card {
+                        BarView {
+                            bar: root.memory;
+                        }
+                        Rectangle {
+                            height: Theme.picnic ? 18px : 14px;
+                        }
+                        BarView {
+                            bar: root.swap;
+                        }
+                        if root.has-vram: Rectangle {
+                            height: Theme.picnic ? 18px : 14px;
+                        }
+                        if root.has-vram: BarView {
+                            bar: root.vram;
+                        }
+                        Rectangle { }
+                    }
+                    // The tiles share out the bars' height, so both columns end on the same line.
                     VerticalLayout {
-                        padding-top: Theme.picnic ? 12px : 0;
-                        padding-bottom: Theme.picnic ? 6px : 0;
-                        padding-left: Theme.picnic ? 3px : 0;
-                        padding-right: Theme.picnic ? 3px : 0;
-                        table := Table {
-                            rows: root.rows;
-                            unsplit: root.unsplit;
-                            current: root.current;
-                            sort-column: root.sort-column;
-                            sort-ascending: root.sort-ascending;
-                            pick(index) => {
-                                root.pick(index);
+                        width: 180px;
+                        spacing: Theme.picnic ? 14px : 8px;
+                        HorizontalLayout {
+                            vertical-stretch: 0;
+                            alignment: end;
+                            MenuButton {
+                                chosen(choice) => {
+                                    root.theme-chosen(choice);
+                                }
                             }
-                            key(key) => {
-                                root.key(key);
-                            }
-                            sort(column) => {
-                                root.sort-clicked(column);
-                            }
-                            filtered: root.filtered;
-                            search <=> root.search;
-                            searched(text) => {
-                                root.searched(text);
+                        }
+                        for tile in root.tiles: TileView {
+                            tile: tile;
+                        }
+                    }
+                }
+                // Breeze: the table runs edge to edge. SebChat: a card like the others.
+                HorizontalLayout {
+                    padding-left: Theme.picnic ? 16px : 0;
+                    padding-right: Theme.picnic ? 19px : 0;
+                    padding-bottom: Theme.picnic ? 19px : 0;
+                    vertical-stretch: 1;
+                    Card {
+                        inset: 0;
+                        VerticalLayout {
+                            padding-top: Theme.picnic ? 12px : 0;
+                            padding-bottom: Theme.picnic ? 6px : 0;
+                            padding-left: Theme.picnic ? 3px : 0;
+                            padding-right: Theme.picnic ? 3px : 0;
+                            table := Table {
+                                rows: root.rows;
+                                unsplit: root.unsplit;
+                                current: root.current;
+                                sort-column: root.sort-column;
+                                sort-ascending: root.sort-ascending;
+                                pick(index) => {
+                                    root.pick(index);
+                                }
+                                key(key) => {
+                                    root.key(key);
+                                }
+                                sort(column) => {
+                                    root.sort-clicked(column);
+                                }
+                                filtered: root.filtered;
+                                search <=> root.search;
+                                searched(text) => {
+                                    root.searched(text);
+                                }
                             }
                         }
                     }

@@ -1,5 +1,6 @@
-//! The chosen theme and table order, kept in `$XDG_CONFIG_HOME/sebwatch/settings` as
-//! `theme=<name>` and `sort=<column>[ ascending]` lines.
+//! The chosen theme, table order and window size, kept in `$XDG_CONFIG_HOME/sebwatch/settings`
+//! as `theme=<name>`, `sort=<column>[ ascending]` and `size=<width>x<height>` lines (logical
+//! pixels).
 
 use std::path::PathBuf;
 
@@ -108,6 +109,24 @@ fn format_sort(sort: Sort) -> String {
     }
 }
 
+/// None when nothing is saved yet. The window keeps its own minimum size.
+fn parse_size(text: &str) -> Option<(f32, f32)> {
+    let (width, height) = get(text, "size").split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
+}
+
+fn format_size((width, height): (f32, f32)) -> String {
+    format!("{}x{}", width.round(), height.round())
+}
+
+pub fn size() -> Option<(f32, f32)> {
+    parse_size(&read())
+}
+
+pub fn save_size(size: (f32, f32)) {
+    save("size", &format_size(size));
+}
+
 /// System when nothing is saved yet.
 pub fn theme() -> ThemeChoice {
     parse_theme(&read())
@@ -152,5 +171,19 @@ mod tests {
         }
         assert_eq!(parse_sort("theme=dark\n"), Sort::default());
         assert_eq!(parse_sort("sort=pixels\n"), Sort::default());
+    }
+
+    #[test]
+    fn size_round_trips_beside_the_other_settings() {
+        let text = set(
+            "theme=dark\nsort=ram\n",
+            "size",
+            &format_size((1203.4, 911.6)),
+        );
+        assert_eq!(parse_size(&text), Some((1203.0, 912.0)));
+        assert_eq!(parse_theme(&text), ThemeChoice::Dark);
+        assert_eq!(text.lines().count(), 3);
+        assert_eq!(parse_size(""), None);
+        assert_eq!(parse_size("size=wide\n"), None);
     }
 }
