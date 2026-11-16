@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme, ThemeChoice, Art, SegmentKind, SegmentFill, Swatch, Dashed, Card, Chevron } from "theme.slint";
 
 export { Theme, ThemeChoice, Art, SegmentKind }
@@ -1072,21 +1072,21 @@ component Table {
                 }
                 accept
             }
-            view := ScrollView {
+            // A list view makes only the rows in sight: an expanded app can hold thousands. The
+            // scope stays the screen reader's list.
+            view := ListView {
+                accessible-role: none;
                 content-width: root.content-width;
-                content-height: rows-layout.preferred-height;
-                rows-layout := VerticalLayout {
+                for row[i] in root.rows: RowView {
                     width: root.content-width;
-                    for row[i] in root.rows: RowView {
-                        entry: row;
-                        index: i;
-                        selected: i == root.current;
-                        focused: i == root.current && scope.has-focus && root.keyboard;
-                        clicked => {
-                            root.keyboard = false;
-                            scope.focus();
-                            root.pick(i);
-                        }
+                    entry: row;
+                    index: i;
+                    selected: i == root.current;
+                    focused: i == root.current && scope.has-focus && root.keyboard;
+                    clicked => {
+                        root.keyboard = false;
+                        scope.focus();
+                        root.pick(i);
                     }
                 }
             }

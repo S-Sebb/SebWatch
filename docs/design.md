@@ -104,6 +104,14 @@ minimised; CPU from `/proc/<pid>/stat`, PSS from `/proc/<pid>/smaps_rollup`.
   28 to 18 MB) and glibc `arena_max=2` (anonymous memory unchanged). Keeping NVML open between
   refreshes would save about 4 ms more, but on this laptop the dGPU drives the display and never
   suspends, so it can't be shown that the GPU still sleeps with it open; not done.
+- An expanded app of thousands of processes (#43), measured with `scripts/bench processes`:
+  it reads and shows one refresh, folded and expanded, with an app of 1000 to 8000 sleeping
+  processes in a throwaway user scope; CPU of the bench thread, software renderer for the frame.
+  Expanded, it was 15 % of one core with 1000 processes and 102 % with 8000: the table made
+  and laid out every row's elements each frame, in sight or not. A list view makes only the
+  rows in sight, and processes are matched to the last sample by lookup, not by a scan of the
+  group: now 3.0 % with 1000, 8.0 % with 4000 and 15 % with 8000, linear. What's left is the
+  kernel's `stat` and `smaps_rollup` of each process, about 33 µs each.
 - No fixed targets: best effort, without hurting stability.
 
 Visual changes are shown as a rendered mockup and approved before they are built.

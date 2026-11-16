@@ -2,12 +2,41 @@
 # Footprint of the release app: about a minute visible, then about a minute minimised, on a
 # headless KWin (`--virtual`) with its own D-Bus session, so nothing shows on the desktop.
 # Prints one line per phase: CPU time as % of one core, and PSS in MB. Logs in target/logs/.
+# `processes` instead measures one refresh with an app of a few thousand processes, folded and
+# expanded: they sleep in a throwaway user scope, stopped at the end.
 # Usage: scripts/bench [seconds per phase, default 60]
+#        scripts/bench processes [counts, default 1000 2000 4000]
 set -u
 cd "$(dirname "$0")/.."
 
 logs=$PWD/target/logs
 mkdir -p "$logs"
+
+if [ "${1:-}" = processes ]; then
+    shift
+    command -v systemd-run >/dev/null || { echo "MISSING: systemd-run not found"; exit 1; }
+    timeout 900 cargo test --release -p sebwatch --bin sebwatch --no-run >"$logs/bench-build.log" 2>&1 ||
+        { echo "FAIL build (see $logs/bench-build.log)"; exit 1; }
+    status=0
+    counts=${*:-1000 2000 4000}
+    for n in $counts; do
+        unit=sebwatch-bench-$$-$n.scope
+        systemd-run --user --scope --quiet --unit="$unit" \
+            bash -c "for i in \$(seq $n); do sleep infinity & done; wait" >/dev/null 2>&1 &
+        for _ in $(seq 100); do
+            procs=$(systemctl --user show -P ControlGroup "$unit" 2>/dev/null)
+            [ -n "$procs" ] && [ "$(wc -l <"/sys/fs/cgroup$procs/cgroup.procs")" -gt "$n" ] && break
+            sleep 0.1
+        done
+        SEBWATCH_BENCH_GROUP=${procs#/} timeout 300 cargo test --release -p sebwatch --bin sebwatch \
+            -- --ignored --exact --nocapture screenshots::bench_refresh >"$logs/bench-$n.log" 2>&1
+        grep '^BENCH' "$logs/bench-$n.log" || { echo "FAIL $n processes (see $logs/bench-$n.log)"; status=1; }
+        systemctl --user stop "$unit"
+        wait
+    done
+    exit $status
+fi
+
 seconds=${1:-60}
 
 if [ -z "${BENCH_SESSION:-}" ]; then
