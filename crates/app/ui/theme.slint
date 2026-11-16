@@ -42,6 +42,13 @@ export global Theme {
     // KMessageWidget's warning colours (Breeze "neutral").
     out property <color> warning: self.picnic ? #C77A1E : #f67400;
     out property <color> warning-bg: self.picnic ? #FCE3BF : self.dark ? #f6740033 : #f6740026;
+    // Breeze's negative text colour: Kill, and a failed End.
+    out property <color> negative: self.picnic ? #B8445F : #da4453;
+    out property <color> negative-bg: self.picnic ? #FDE0E6 : self.dark ? #da445333 : #da445326;
+    out property <color> info-bg: self.picnic ? #FCE3BF : self.dark ? #3daee933 : #3daee926;
+    // Push buttons: Breeze's button face and frame, SebChat's cream with a brown outline.
+    out property <color> button: self.picnic ? #FFF7E8 : self.dark ? #2a2e32 : #fcfcfc;
+    out property <color> button-line: self.picnic ? #5B331C : self.dark ? #4d5257 : #b4b8bc;
 
     // Bar segments: the apps' series colours (five for RAM's top five, two more so the swap and
     // VRAM bars' own top apps keep one colour in every bar), then the fixed parts, each with its ink.

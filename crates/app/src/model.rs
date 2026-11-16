@@ -2,11 +2,13 @@
 //! Filled from `live.rs` (sebwatch-core) in the app and from `sample.rs` in tests and screenshots.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
 
 use slint::{ModelRc, SharedString, VecModel};
 
+use crate::ending::Endable;
 use crate::history::{History, Measure};
 use crate::icons::Icons;
 use crate::{Bar, Row, RowKind, Segment, SegmentKind, SwapInfo, TableKey, Tile};
@@ -86,6 +88,8 @@ pub struct App {
     /// Its cgroups' names, e.g. "app-steam@autostart.service", and their processes: what a search
     /// finds it by besides its name.
     pub groups: Vec<String>,
+    /// The same groups as cgroups relative to the cgroup root, for End and Kill.
+    pub cgroups: Vec<PathBuf>,
     pub pids: Vec<u32>,
     /// RAM in use, including its compressed share in zswap.
     pub ram: u64,
@@ -289,6 +293,39 @@ pub struct View {
     /// The last rendered rows, in order.
     tree: Vec<Node>,
     focus: Option<Focus>,
+    /// Rows ended or killed: what became of them, until they leave the table.
+    notes: HashMap<String, Note>,
+}
+
+/// What became of a row after End or Kill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Note {
+    Ending,
+    /// Still there 5 s after End.
+    Running,
+    /// Gone, while the window is paused and still lists it.
+    Ended,
+}
+
+impl Note {
+    fn text(self) -> &'static str {
+        match self {
+            Note::Ending => "ending…",
+            Note::Running => "still running",
+            Note::Ended => "ended",
+        }
+    }
+}
+
+/// The selected row, for End and Kill.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Selected {
+    pub key: String,
+    /// As its row names it: "Android emulator · guide35", "netsimd".
+    pub name: String,
+    /// With the PID, for a process: "netsimd (4130291)".
+    pub full: String,
+    pub endable: Endable,
 }
 
 /// A rendered row's place in the tree.
@@ -298,6 +335,9 @@ struct Node {
     parent: Option<String>,
     /// An app, the "N more apps" fold or the closed apps.
     expandable: bool,
+    name: String,
+    full: String,
+    endable: Endable,
 }
 
 /// The row the keyboard is on. It follows its row's key, so it stays on the same app when a
@@ -328,6 +368,7 @@ pub struct Shown {
     pub warning: String,
     /// The system can't split memory by app: a message replaces the table.
     pub unsplit: bool,
+    pub selected: Option<Selected>,
 }
 
 /// The key of the "N more apps" row.
@@ -380,18 +421,38 @@ impl View {
         }
     }
 
-    /// A click on the row at `index`: focuses it, and expands or folds an app. True when it did.
+    /// A click on the row at `index`: selects it.
     pub fn pick(&mut self, index: usize) -> bool {
-        let Some(node) = self.tree.get(index) else {
+        if index < self.tree.len() {
+            self.focus_on(index);
+        }
+        false
+    }
+
+    /// A click on the row's arrow: expands or folds it. True when it did.
+    pub fn expand(&mut self, index: usize) -> bool {
+        let Some(node) = self.tree.get(index).filter(|n| n.expandable) else {
             return false;
         };
         let key = node.key.clone();
-        let toggled = node.expandable;
-        self.focus_on(index);
-        if toggled {
-            self.toggle(&key);
-        }
-        toggled
+        self.toggle(&key);
+        true
+    }
+
+    /// The selected row, if any.
+    pub fn selected(&self) -> Option<Selected> {
+        let node = &self.tree[self.focus.as_ref()?.index];
+        Some(Selected {
+            key: node.key.clone(),
+            name: node.name.clone(),
+            full: node.full.clone(),
+            endable: node.endable.clone(),
+        })
+    }
+
+    /// Marks the row with what became of it after End or Kill.
+    pub fn note(&mut self, key: &str, note: Note) {
+        self.notes.insert(key.into(), note);
     }
 
     /// A key pressed in the table. True when it expanded or folded an app, which then needs a
@@ -460,12 +521,17 @@ impl View {
         });
     }
 
-    /// Finds the focused row in newly rendered rows.
+    /// Finds the focused row in newly rendered rows. A row that was ended takes the selection
+    /// with it, so a second Delete doesn't end its neighbour.
     fn refocus(&mut self) -> i32 {
         let Some(focus) = &self.focus else {
             return -1;
         };
         let at = |key: &str| self.tree.iter().position(|n| n.key == key);
+        if at(&focus.key).is_none() && self.notes.contains_key(&focus.key) {
+            self.focus = None;
+            return -1;
+        }
         let index = at(&focus.key)
             .or_else(|| focus.parent.as_deref().and_then(at))
             .or_else(|| self.tree.len().checked_sub(1).map(|l| focus.index.min(l)));
@@ -481,11 +547,25 @@ impl View {
         }
     }
 
-    fn node(&mut self, key: &str, parent: Option<&str>, expandable: bool) {
+    fn node(
+        &mut self,
+        key: &str,
+        parent: Option<&str>,
+        expandable: bool,
+        name: &str,
+        endable: Endable,
+    ) {
+        let full = match &endable {
+            Endable::Process(pid) => format!("{name} ({pid})"),
+            _ => name.into(),
+        };
         self.tree.push(Node {
             key: key.into(),
             parent: parent.map(String::from),
             expandable,
+            name: name.into(),
+            full,
+            endable,
         });
     }
 
@@ -495,7 +575,17 @@ impl View {
         self.failures = 0;
         self.shown_at = crate::clock::now();
         self.last = Some(snapshot);
-        self.render()
+        let shown = self.render();
+        // A row that left the table has no more news.
+        let tree = &self.tree;
+        self.notes
+            .retain(|key, _| tree.iter().any(|n| &n.key == key));
+        shown
+    }
+
+    /// When the reading shown was taken, as local "HH:MM:SS".
+    pub fn shown_at(&self) -> &str {
+        &self.shown_at
     }
 
     /// A reading failed: the last one stays, with a warning saying so.
@@ -514,6 +604,12 @@ impl View {
     }
 
     fn show(&mut self, s: &Snapshot) -> Shown {
+        let mut shown = self.shown(s);
+        shown.selected = self.selected();
+        shown
+    }
+
+    fn shown(&mut self, s: &Snapshot) -> Shown {
         self.tree.clear();
         self.gpu_unavailable = s.nvidia_unavailable;
         self.igpu_whole = s.igpu.as_ref().is_some_and(|g| g.whole_device);
@@ -539,7 +635,10 @@ impl View {
             vram: vram_bar(s, &series, &coloured(vram, &series)),
             igpu: s.igpu.as_ref().map_or(String::new(), |g| g.vendor.clone()),
             tiles: tiles(s, &self.history),
-            rows: self.rows(s, &series),
+            rows: {
+                let rows = self.rows(s, &series);
+                self.noted(rows)
+            },
             focus: self.refocus(),
             warning: match self.failures {
                 0 => String::new(),
@@ -555,6 +654,7 @@ impl View {
                 ),
             },
             unsplit: s.unsplit.is_some(),
+            selected: None,
             sort: self.sort,
             filtered: match self.searching() {
                 Some(query) => format!(
@@ -565,6 +665,21 @@ impl View {
                 None => String::new(),
             },
         }
+    }
+
+    /// Rows with a note say it after their detail; an ended one is greyed.
+    fn noted(&self, mut rows: Vec<Row>) -> Vec<Row> {
+        for row in &mut rows {
+            if let Some(&note) = self.notes.get(row.key.as_str()) {
+                row.detail = match row.detail.as_str() {
+                    "" => format!("· {}", note.text()),
+                    detail => format!("{detail} · {}", note.text()),
+                }
+                .into();
+                row.ended = note == Note::Ended;
+            }
+        }
+        rows
     }
 
     /// The search in lower case, `None` for an empty field.
@@ -600,7 +715,8 @@ impl View {
                 ram: bytes(more.iter().map(|a| a.ram).sum()).into(),
                 ..empty_row()
             });
-            self.node(MORE, None, true);
+            let why = Endable::Nothing("Nothing to end: pick one of its apps.".into());
+            self.node(MORE, None, true, &format!("{} more apps", more.len()), why);
             if expanded {
                 for app in more {
                     self.app_rows(&mut rows, app, colour(app), Some(MORE));
@@ -634,10 +750,17 @@ impl View {
             cache: bytes(closed.file_cache).into(),
             ..empty_row()
         });
-        self.node(CLOSED, None, true);
+        let why = || Endable::Nothing("Nothing to end: these apps have closed.".into());
+        self.node(CLOSED, None, true, CLOSED_APPS, why());
         if expanded {
             for e in &closed.exited {
-                self.node(&format!("{CLOSED}\u{1}{}", e.name), Some(CLOSED), false);
+                self.node(
+                    &format!("{CLOSED}\u{1}{}", e.name),
+                    Some(CLOSED),
+                    false,
+                    &e.name,
+                    why(),
+                );
             }
             rows.extend(closed.exited.iter().map(|e| Row {
                 kind: RowKind::Process,
@@ -655,7 +778,18 @@ impl View {
 
     fn app_rows(&mut self, rows: &mut Vec<Row>, app: &App, series: i32, parent: Option<&str>) {
         let expanded = self.expanded.contains(&app.key);
-        self.node(&app.key, parent, true);
+        // A detail after "·" names this instance of the app, as in "Android emulator · guide35".
+        let name = match app.detail.starts_with('·') {
+            true => format!("{} {}", app.name, app.detail),
+            false => app.name.clone(),
+        };
+        self.node(
+            &app.key,
+            parent,
+            true,
+            &name,
+            Endable::Groups(app.cgroups.clone()),
+        );
         rows.push(Row {
             kind: RowKind::App,
             depth: 0,
@@ -694,6 +828,7 @@ impl View {
             }
             .into(),
             tip: "".into(),
+            ended: false,
         });
         if !expanded {
             return;
@@ -710,7 +845,22 @@ impl View {
                 Some(group) if !part.group => group.clone(),
                 _ => app.key.clone(),
             };
-            self.node(&key, Some(&parent), false);
+            let endable = if part.group {
+                match app
+                    .cgroups
+                    .iter()
+                    .find(|g| g.file_name().is_some_and(|l| *l == *part.name))
+                {
+                    Some(group) => Endable::Groups(vec![group.clone()]),
+                    None => Endable::Nothing("Nothing to end: no process runs in it.".into()),
+                }
+            } else {
+                match part.detail.parse() {
+                    Ok(pid) => Endable::Process(pid),
+                    Err(_) => Endable::Nothing("Nothing to end: it has exited.".into()),
+                }
+            };
+            self.node(&key, Some(&parent), false, &part.name, endable);
             rows.push(Row {
                 kind: if part.group {
                     RowKind::Group
@@ -735,7 +885,8 @@ impl View {
             || !app.unreadable.is_empty()
         {
             let key = format!("{}\u{1}leftover", app.key);
-            self.node(&key, Some(&app.key), false);
+            let why = Endable::Nothing("Nothing to end: no process owns this memory.".into());
+            self.node(&key, Some(&app.key), false, "", why);
             rows.push(Row {
                 key: key.into(),
                 ..leftover_row(app)
@@ -875,6 +1026,7 @@ fn empty_row() -> Row {
         gpu: none.clone(),
         vram: none,
         tip: "".into(),
+        ended: false,
     }
 }
 
@@ -1877,9 +2029,56 @@ mod tests {
         assert_eq!(press(TableKey::Right), (rows - 1, false));
         assert_eq!(press(TableKey::Left), (rows - 2, false));
         assert_eq!(press(TableKey::Home), (0, false));
-        assert!(view.pick(1));
+        // A click selects; only the arrow expands.
+        assert!(!view.pick(1));
         assert_eq!(view.render().focus, 1);
+        assert!(!view.expanded().contains("Android emulator"));
+        assert!(view.expand(1));
         assert!(view.expanded().contains("Android emulator"));
+        assert_eq!(view.render().focus, 1);
+    }
+
+    #[test]
+    fn selection_names_what_end_acts_on_and_an_ended_row_takes_it_away() {
+        let mut view = View::default();
+        view.update(crate::sample::snapshot());
+        assert_eq!(view.render().selected, None);
+        view.pick(1);
+        let app = view.render().selected.unwrap();
+        assert_eq!(app.name, "Android emulator · guide35");
+        assert!(
+            matches!(&app.endable, Endable::Groups(g) if g[0].ends_with("emulator-guide35.service"))
+        );
+        view.expand(1);
+        view.render();
+        view.pick(3);
+        let netsimd = view.render().selected.unwrap();
+        assert_eq!(
+            (netsimd.name.as_str(), netsimd.full.as_str()),
+            ("netsimd", "netsimd (4130291)")
+        );
+        assert_eq!(netsimd.endable, Endable::Process(4130291));
+        // The leftover row has nothing to end.
+        view.pick(6);
+        assert!(matches!(
+            view.render().selected.unwrap().endable,
+            Endable::Nothing(_)
+        ));
+
+        // End on netsimd: its row says so, greyed once it has ended while paused.
+        view.pick(3);
+        view.note(&netsimd.key, Note::Ending);
+        assert_eq!(view.render().rows[3].detail, "4130291 · ending…");
+        view.note(&netsimd.key, Note::Ended);
+        let shown = view.render();
+        assert!(shown.rows[3].ended && !shown.rows[2].ended);
+        // Gone from the next reading: nothing is selected, so a second Delete can't end the
+        // row that moved up into its place.
+        let mut s = crate::sample::snapshot();
+        s.apps[1].parts.retain(|p| p.name != "netsimd");
+        let shown = view.update(s);
+        assert_eq!((shown.focus, shown.selected), (-1, None));
+        assert!(view.notes.is_empty());
     }
 
     #[test]
@@ -1889,6 +2088,8 @@ mod tests {
         view.pick(1);
         view.render();
         // Android emulator's netsimd.
+        view.press(TableKey::Right);
+        view.render();
         view.press(TableKey::Right);
         view.press(TableKey::Down);
         assert_eq!(view.render().rows[3].name, "netsimd");
