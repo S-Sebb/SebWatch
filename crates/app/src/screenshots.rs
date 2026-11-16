@@ -172,3 +172,146 @@ fn screenshots() {
     window.set_size(PhysicalSize::new(shot.width, shot.height));
     shot.save(&shot.render(), &dir.join("live-light.png"));
 }
+
+/// The 0.1 mockups (#33 to #40), from `sample::mock`. Run with
+/// `SEBWATCH_SHOTS=<dir> cargo test -p sebwatch --bin sebwatch mockups -- --ignored`.
+#[test]
+#[ignore = "writes PNG files"]
+fn mockups() {
+    use crate::sample::mock;
+    let dir = std::path::PathBuf::from(std::env::var("SEBWATCH_SHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    let now = Rc::new(Cell::new(Duration::ZERO));
+    slint::platform::set_platform(Box::new(Offscreen {
+        window: window.clone(),
+        now: now.clone(),
+    }))
+    .unwrap();
+    let open = |choice, width, height, shown: crate::model::Shown| {
+        let ui = MainWindow::new().unwrap();
+        ui.global::<Theme>().set_choice(choice);
+        crate::setup(&ui, mock::snapshot(), |_| {});
+        crate::show(&ui, shown);
+        ui.show().unwrap();
+        window.set_size(PhysicalSize::new(width, height));
+        let shot = Shot {
+            window: window.clone(),
+            now: now.clone(),
+            width,
+            height,
+        };
+        (ui, shot)
+    };
+    let save =
+        |shot: &Shot, name: &str| shot.save(&shot.render(), &dir.join(format!("{name}.png")));
+
+    // Main view in each theme: the RAM bar's renamed leftover hovered, Android emulator open.
+    for (choice, name, height) in [
+        (ThemeChoice::Light, "light", 844),
+        (ThemeChoice::Dark, "dark", 844),
+        (ThemeChoice::Sebchat, "sebchat", 1024),
+    ] {
+        let (ui, shot) = open(
+            choice,
+            1000,
+            height,
+            mock::shown(mock::snapshot, 0, &["Android emulator"]),
+        );
+        ui.set_selected("Android emulator".into());
+        if choice != ThemeChoice::Sebchat {
+            let kernel = ui.global::<Theme>().get_kernel();
+            let (x, y) = find(&shot.render(), shot.width, kernel);
+            shot.pointer(x, y, false);
+            shot.wait(Duration::from_millis(800));
+        }
+        save(&shot, &format!("main-{name}"));
+        ui.hide().unwrap();
+    }
+
+    let light = ThemeChoice::Light;
+    // #33: sorted by swap.
+    let (ui, shot) = open(light, 1000, 844, mock::shown(mock::snapshot, 1, &[]));
+    ui.set_sort_column(1);
+    save(&shot, "sort-swap-light");
+    ui.hide().unwrap();
+
+    // #34: searching "k".
+    let (shown, note) = mock::filtered();
+    let (ui, shot) = open(light, 1000, 844, shown);
+    ui.set_search("k".into());
+    ui.set_search_focused(true);
+    ui.set_filter_note(note.into());
+    save(&shot, "search-light");
+    ui.hide().unwrap();
+
+    // #35: keyboard focus on a row, then in the theme menu.
+    for (choice, name) in [(light, "light"), (ThemeChoice::Dark, "dark")] {
+        let (ui, shot) = open(
+            choice,
+            1000,
+            844,
+            mock::shown(mock::snapshot, 0, &["Android emulator"]),
+        );
+        ui.set_selected("Android emulator".into());
+        ui.set_focus_row(1);
+        save(&shot, &format!("focus-row-{name}"));
+        ui.hide().unwrap();
+    }
+    let (ui, shot) = open(light, 1000, 844, mock::shown(mock::snapshot, 0, &[]));
+    ui.set_menu_focus(2);
+    shot.render();
+    shot.pointer(1000.0 - 16.0 - 15.0, 14.0 + 15.0, true);
+    save(&shot, "focus-menu-light");
+    ui.hide().unwrap();
+
+    // #36: the minimum width, and a short window.
+    for (name, width, height) in [("narrow", 760, 844), ("short", 1000, 480)] {
+        let (ui, shot) = open(light, width, height, mock::shown(mock::snapshot, 0, &[]));
+        save(&shot, &format!("{name}-light"));
+        ui.hide().unwrap();
+    }
+    let (ui, shot) = open(
+        ThemeChoice::Dark,
+        760,
+        844,
+        mock::shown(mock::snapshot, 0, &[]),
+    );
+    save(&shot, "narrow-dark");
+    ui.hide().unwrap();
+
+    // #38: unavailable readings, not updating, no per-app accounting.
+    let (ui, shot) = open(light, 1000, 844, mock::unavailable());
+    ui.set_vram_note("The NVIDIA driver is not answering".into());
+    save(&shot, "unavailable-light");
+    ui.hide().unwrap();
+    let (ui, shot) = open(light, 1000, 844, mock::shown(mock::snapshot, 0, &[]));
+    ui.set_message("Not updating: the last 3 readings failed (cannot read /sys/fs/cgroup/user.slice/memory.stat). Showing the reading from 14:02:16.".into());
+    save(&shot, "stale-light");
+    ui.hide().unwrap();
+    let (ui, shot) = open(light, 1000, 844, mock::unaccounted());
+    ui.set_placeholder_title("SebWatch can't split memory by app on this system".into());
+    ui.set_placeholder_text("It needs cgroup v2 memory accounting and the per-app groups a systemd user session creates; this system has neither. The bars above still show the totals.".into());
+    save(&shot, "unaccounted-light");
+    ui.hide().unwrap();
+
+    // #40: closed apps, open in the table, hovered in the RAM bar.
+    let (ui, shot) = open(
+        light,
+        1000,
+        844,
+        mock::shown(mock::snapshot, 0, &["closed"]),
+    );
+    let other = ui.global::<Theme>().get_other();
+    let pixels = shot.render();
+    let (x, y) = find(&pixels, shot.width, other);
+    let i = (y as u32 - 12) * shot.width + x as u32;
+    let run = pixels[i as usize..]
+        .iter()
+        .take_while(|p| (p.r, p.g, p.b) == (other.red(), other.green(), other.blue()))
+        .count();
+    shot.pointer(x + run as f32 + 12.0, y, false);
+    shot.wait(Duration::from_millis(800));
+    save(&shot, "closed-light");
+    ui.hide().unwrap();
+}

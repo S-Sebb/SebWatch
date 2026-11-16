@@ -1,4 +1,4 @@
-import { ListView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Theme, ThemeChoice, Art, SegmentKind, SegmentFill, Swatch, Dashed, Card, Chevron } from "theme.slint";
 
 export { Theme, ThemeChoice, Art, SegmentKind }
@@ -79,6 +79,8 @@ component SectionTitle inherits Label {
 component SegmentBar {
     in property <[Segment]> segments;
     in property <length> gap: 2px;
+    // #38: why an empty bar is empty, inside it.
+    in property <string> note;
     property <length> share: self.width - (self.segments.length - 1) * self.gap;
     property <int> hovered: -1;
     height: 28px;
@@ -88,6 +90,12 @@ component SegmentBar {
         width: 100%;
         height: 100%;
     }
+    if root.segments.length == 0 && root.note != "": Muted {
+        x: 10px;
+        height: 100%;
+        text: root.note;
+        font-size: Theme.small;
+    }
 
     for s[i] in root.segments: Rectangle {
             x: s.start * root.share + i * root.gap;
@@ -95,7 +103,7 @@ component SegmentBar {
             border-radius: Theme.radius;
             clip: true;
             background: SegmentFill.color(s.kind, s.series);
-            if s.kind == SegmentKind.cache: Image {
+            if s.kind == SegmentKind.cache || s.kind == SegmentKind.closed: Image {
                 width: 100%;
                 height: 100%;
                 source: Art.hatch;
@@ -195,6 +203,7 @@ component SegmentBar {
 
 component BarView {
     in property <Bar> bar;
+    in property <string> note;
     vertical-stretch: 0;
     VerticalLayout {
         spacing: 5px;
@@ -210,6 +219,7 @@ component BarView {
         }
         SegmentBar {
             segments: root.bar.segments;
+            note: root.note;
         }
         // An empty FlexboxLayout limits the column's width to almost nothing.
         if root.bar.segments.length > 0: FlexboxLayout {
@@ -290,6 +300,19 @@ component TileView inherits Card {
     }
 }
 
+// #35: the keyboard focus, Breeze's 1 px accent frame inside the item, or a 2 px one in SebChat.
+component FocusRing {
+    Rectangle {
+        x: Theme.picnic ? 0 : 1px;
+        y: self.x;
+        width: root.width - 2 * self.x;
+        height: root.height - 2 * self.y;
+        border-width: Theme.picnic ? 2px : 1px;
+        border-radius: Theme.picnic ? 0 : 3px;
+        border-color: Theme.accent;
+    }
+}
+
 // The settings menu: for now only the theme.
 component MenuButton {
     property <[{choice: ThemeChoice, name: string, note: string}]> choices: [
@@ -299,6 +322,8 @@ component MenuButton {
         { choice: ThemeChoice.sebchat, name: "SebChat", note: "" },
     ];
     callback chosen(ThemeChoice);
+    // #35: the item the keyboard is on, -1 for none.
+    in property <int> focus-index: -1;
     width: 30px;
     height: 30px;
     accessible-role: button;
@@ -353,7 +378,7 @@ component MenuButton {
                         font-weight: Theme.picnic ? 800 : 400;
                     }
                 }
-                for c in root.choices: Rectangle {
+                for c[i] in root.choices: Rectangle {
                     height: 26px;
                     border-radius: Theme.picnic ? 0 : 3px;
                     background: Theme.choice == c.choice ? Theme.selection : item.has-hover ? Theme.hover : transparent;
@@ -371,6 +396,10 @@ component MenuButton {
                         Muted {
                             text: c.note;
                         }
+                    }
+                    if i == root.focus-index: FocusRing {
+                        width: 100%;
+                        height: 100%;
                     }
                     item := TouchArea {
                         clicked => {
@@ -394,13 +423,15 @@ component Cell inherits Label {
     in property <int> column;
     width: Columns.widths[self.column];
     horizontal-alignment: right;
-    color: self.text == "—" ? Theme.muted : Theme.fg;
+    // #38: "n/a" where a reading is unavailable, "—" where a figure doesn't apply, "0" for zero.
+    color: self.text == "—" || self.text == "n/a" ? Theme.muted : Theme.fg;
 }
 
 component RowView inherits Rectangle {
     in property <Row> entry;
     in property <bool> odd;
     in property <bool> selected;
+    in property <bool> focused;
     callback clicked();
     property <bool> top: self.entry.kind == RowKind.app || self.entry.kind == RowKind.more;
     property <length> small: Theme.picnic && !self.top ? Theme.small : Theme.font-size;
@@ -496,6 +527,11 @@ component RowView inherits Rectangle {
         }
     }
 
+    if root.focused: FocusRing {
+                        width: 100%;
+                        height: 100%;
+                    }
+
     TouchArea {
         clicked => {
             root.clicked();
@@ -503,21 +539,127 @@ component RowView inherits Rectangle {
     }
 }
 
+// #34: the search field, KDE's search line: a magnifier, the hint, a clear button once typed in.
+component SearchField inherits Rectangle {
+    in property <string> text;
+    in property <bool> focused;
+    height: Theme.picnic ? 30px : 28px;
+    background: Theme.view;
+    border-width: Theme.picnic ? 2px : 1px;
+    border-radius: Theme.picnic ? 0 : 3px;
+    border-color: self.focused ? Theme.accent : Theme.picnic ? Theme.line : #00000033;
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 5px;
+        spacing: 6px;
+        VerticalLayout {
+            alignment: center;
+            Path {
+                width: 14px;
+                height: 14px;
+                viewbox-width: 14;
+                viewbox-height: 14;
+                commands: "M 5.5 1 A 4.5 4.5 0 1 1 5.5 10 A 4.5 4.5 0 1 1 5.5 1 M 8.8 8.8 L 13 13";
+                stroke: Theme.picnic ? Theme.fg : Theme.muted;
+                stroke-width: Theme.picnic ? 2px : 1.2px;
+            }
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            if root.text == "": Muted {
+                text: "Search apps, groups or PIDs";
+            }
+            if root.text != "": Label {
+                text: root.text;
+            }
+            if root.focused: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 1px;
+                    height: 16px;
+                    background: Theme.fg;
+                }
+            }
+        }
+        if root.text == "": Muted {
+            text: "Ctrl+F";
+            font-size: Theme.small;
+        }
+        if root.text != "": VerticalLayout {
+            alignment: center;
+            // Clear (Escape).
+            Path {
+                width: 16px;
+                height: 16px;
+                viewbox-width: 16;
+                viewbox-height: 16;
+                commands: "M 4.5 4.5 L 11.5 11.5 M 11.5 4.5 L 4.5 11.5";
+                stroke: Theme.fg;
+                stroke-width: Theme.picnic ? 2px : 1px;
+            }
+        }
+    }
+}
+
 component Table {
     in property <[Row]> rows;
     in-out property <string> selected;
+    // #33: the sorted column (0 for RAM in use) and its direction.
+    in property <int> sort-column: 0;
+    in property <bool> sort-ascending;
+    // #35: the row the keyboard is on, -1 for none.
+    in property <int> focus-index: -1;
+    // #34: the search and, while it filters, how many apps match.
+    in property <string> search;
+    in property <bool> search-focused;
+    in property <string> filter-note;
+    // #38: shown instead of the rows when there are no apps to show.
+    in property <string> placeholder-title;
+    in property <string> placeholder-text;
     callback toggle(string);
+    property <[string]> sort-names: ["RAM in use", "swapped out", "file cache", "CPU", "disk", "GPU", "VRAM"];
+    // #36: the name column keeps 220 px; a narrower window scrolls the table sideways.
+    property <length> content-width: max(self.width, 220px + 596px + 16px);
+    min-height: 300px;
 
     VerticalLayout {
-        if Theme.picnic: HorizontalLayout {
-            padding-left: 14px;
-            padding-right: 14px;
-            padding-bottom: 4px;
-            SectionTitle {
+        // #34: the search line above the table, as in KDE System Monitor.
+        HorizontalLayout {
+            padding-left: Theme.picnic ? 14px : 16px;
+            padding-right: self.padding-left;
+            padding-bottom: Theme.picnic ? 8px : 8px;
+            spacing: 12px;
+            if Theme.picnic: SectionTitle {
                 text: "Apps";
             }
-            Muted {
-                text: "sorted by RAM in use";
+            SearchField {
+                width: 300px;
+                text: root.search;
+                focused: root.search-focused;
+            }
+            if root.filter-note != "": VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    background: Theme.selection;
+                    border-radius: Theme.picnic ? 0 : 3px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        padding-top: 3px;
+                        padding-bottom: 3px;
+                        Label {
+                            text: root.filter-note;
+                            font-size: Theme.small;
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if Theme.picnic: Muted {
+                text: "sorted by " + root.sort-names[root.sort-column];
                 font-size: Theme.small;
                 font-weight: 800;
                 horizontal-alignment: right;
@@ -526,6 +668,7 @@ component Table {
         // The header: Breeze's column dividers, or SebChat's small muted labels over a thick line.
         Rectangle {
             height: Theme.picnic ? 31px : 29px;
+            clip: true;
             background: Theme.picnic ? transparent : Theme.view;
             Rectangle {
                 y: 0;
@@ -538,7 +681,10 @@ component Table {
                 height: Theme.picnic ? 3px : 1px;
                 background: Theme.line;
             }
+            // Scrolls sideways with the rows.
             HorizontalLayout {
+                x: scroll.content-x;
+                width: root.content-width;
                 Rectangle {
                     horizontal-stretch: 1;
                     Label {
@@ -569,13 +715,13 @@ component Table {
                             font-weight: Theme.picnic ? 800 : 400;
                             color: Theme.picnic ? Theme.muted : Theme.fg;
                         }
-                        // Sorted by RAM in use.
-                        if i == 0: VerticalLayout {
+                        if i == root.sort-column: VerticalLayout {
                             alignment: center;
                             Chevron {
                                 width: 10px;
                                 height: 10px;
                                 open: true;
+                                up: root.sort-ascending;
                                 color: Theme.picnic ? Theme.muted : Theme.fg;
                             }
                         }
@@ -583,15 +729,49 @@ component Table {
                 }
             }
         }
-        ListView {
-            for row[i] in root.rows: RowView {
-                entry: row;
-                odd: Math.mod(i, 2) == 1;
-                selected: row.key == root.selected && row.kind == RowKind.app;
-                clicked => {
-                    if row.kind == RowKind.app || row.kind == RowKind.more {
-                        root.selected = row.key;
-                        root.toggle(row.key);
+        if root.placeholder-title != "": Rectangle {
+            vertical-stretch: 1;
+            background: Theme.picnic ? transparent : Theme.view;
+            // KDE's placeholder message for an empty view.
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                padding-left: 60px;
+                padding-right: 60px;
+                Text {
+                    text: root.placeholder-title;
+                    color: Theme.muted;
+                    font-size: 18px;
+                    font-family: Theme.title-font;
+                    font-weight: Theme.picnic ? 400 : 400;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                Muted {
+                    text: root.placeholder-text;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        scroll := ScrollView {
+            visible: root.placeholder-title == "";
+            vertical-stretch: root.placeholder-title == "" ? 1 : 0;
+            content-width: root.content-width;
+            content-height: list.preferred-height;
+            list := VerticalLayout {
+                width: root.content-width;
+                alignment: start;
+                for row[i] in root.rows: RowView {
+                    entry: row;
+                    odd: Math.mod(i, 2) == 1;
+                    selected: row.key == root.selected && row.kind == RowKind.app;
+                    focused: i == root.focus-index;
+                    clicked => {
+                        if row.kind == RowKind.app || row.kind == RowKind.more {
+                            root.selected = row.key;
+                            root.toggle(row.key);
+                        }
                     }
                 }
             }
@@ -610,6 +790,19 @@ export component MainWindow inherits Window {
     in-out property <string> selected;
     callback toggle(string);
     callback theme-chosen(ThemeChoice);
+    // The 0.1 mockups' states, set by the screenshots (no behaviour yet).
+    in property <int> sort-column: 0;
+    in property <bool> sort-ascending;
+    in property <int> focus-row: -1;
+    in property <int> menu-focus: -1;
+    in property <string> search;
+    in property <bool> search-focused;
+    in property <string> filter-note;
+    in property <string> vram-note;
+    // #38: the "not updating" message, KDE's inline message (KMessageWidget).
+    in property <string> message;
+    in property <string> placeholder-title;
+    in property <string> placeholder-text;
 
     in property <string> version;
 
@@ -633,9 +826,60 @@ export component MainWindow inherits Window {
         image-rendering: pixelated;
     }
 
-    VerticalLayout {
+    // #36: a window too short for the bars and a few table rows scrolls as one page.
+    page := ScrollView {
+    content-width: self.visible-width;
+    content-height: max(self.visible-height, content.min-height);
+    content := VerticalLayout {
+        width: page.visible-width;
+        height: page.content-height;
         padding-top: 14px;
         spacing: Theme.picnic ? 22px : 14px;
+        if root.message != "": HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            Rectangle {
+                background: Theme.warning-bg;
+                border-width: 1px;
+                border-color: Theme.warning;
+                border-radius: Theme.picnic ? 0 : 4px;
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-left: 10px;
+                    spacing: 9px;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 18px;
+                            height: 18px;
+                            Path {
+                                width: 18px;
+                                height: 18px;
+                                viewbox-width: 18;
+                                viewbox-height: 18;
+                                commands: "M 9 1.5 L 17 16 L 1 16 Z";
+                                fill: Theme.warning;
+                            }
+                            Text {
+                                y: 4px;
+                                height: 12px;
+                                text: "!";
+                                color: #ffffff;
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Label {
+                        text: root.message;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
         HorizontalLayout {
             padding-left: 16px;
             padding-right: 16px;
@@ -657,6 +901,7 @@ export component MainWindow inherits Window {
                 }
                 if root.has-vram: BarView {
                     bar: root.vram;
+                    note: root.vram-note;
                 }
                 Rectangle { }
             }
@@ -668,6 +913,7 @@ export component MainWindow inherits Window {
                     vertical-stretch: 0;
                     alignment: end;
                     MenuButton {
+                        focus-index: root.menu-focus;
                         chosen(choice) => {
                             root.theme-chosen(choice);
                         }
@@ -693,6 +939,14 @@ export component MainWindow inherits Window {
                     padding-right: Theme.picnic ? 3px : 0;
                     Table {
                         rows: root.rows;
+                        sort-column: root.sort-column;
+                        sort-ascending: root.sort-ascending;
+                        focus-index: root.focus-row;
+                        search: root.search;
+                        search-focused: root.search-focused;
+                        filter-note: root.filter-note;
+                        placeholder-title: root.placeholder-title;
+                        placeholder-text: root.placeholder-text;
                         selected <=> root.selected;
                         toggle(key) => {
                             root.toggle(key);
@@ -701,5 +955,6 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
     }
 }
