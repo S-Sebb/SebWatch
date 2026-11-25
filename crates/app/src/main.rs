@@ -293,16 +293,12 @@ fn setup(
             if VIEW.with_borrow(|view| view.search.is_empty()) {
                 weak.unwrap().set_search("".into());
             }
+            VIEW.with_borrow(|view| view.revealed(&key))
         }
     });
     window.on_deselect({
         let act = act.clone();
-        move || {
-            act(&|view| {
-                view.deselect();
-                false
-            })
-        }
+        move || act(&|view| view.deselect())
     });
     window.on_key(move |key| act(&|view| view.press(key)));
     let weak = window.as_weak();

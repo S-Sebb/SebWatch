@@ -650,8 +650,8 @@ fn screenshots() {
 }
 
 /// #86: a bar segment's hover ring and tooltip stay while the pointer rests on it through
-/// refreshes. #88: a click on it selects its app's row. The only test here that runs by default, so the only one in a plain `cargo test`
-/// to set the platform.
+/// refreshes. #88: a click on it selects its app's row, scrolled into view. The only test here
+/// that runs by default, so the only one in a plain `cargo test` to set the platform.
 #[test]
 fn bar_section_hover_and_click() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
@@ -731,6 +731,24 @@ fn bar_section_hover_and_click() {
     assert_eq!(ui.get_current(), 1);
     shot.tap(Key::Escape);
     assert_eq!(ui.get_current(), -1);
+
+    // In the shortest window the page scrolls to the row too: its swatch, left of the name,
+    // comes into sight.
+    window.set_size(PhysicalSize::new(shot.width, 480));
+    let short = Shot {
+        height: 480,
+        now: shot.now.clone(),
+        window: window.clone(),
+        ..shot
+    };
+    let swatch = |pixels: &[Rgb8Pixel]| {
+        (0..pixels.len()).any(|i| (i as u32 % short.width) < 60 && same(pixels[i], android))
+    };
+    let (x, y) = find(&short.render(), short.width, android);
+    assert!(!swatch(&short.render()), "the row starts out of sight");
+    short.pointer(x, y, true);
+    assert_eq!(ui.get_current(), 1);
+    assert!(swatch(&short.render()), "the row scrolled into sight");
 }
 
 /// `scripts/bench processes`: the CPU one refresh costs, reading and showing it, with the app

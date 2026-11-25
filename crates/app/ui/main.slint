@@ -193,6 +193,26 @@ component FocusTip inherits AboutTip {
     y: self.tip.y;
 }
 
+// A bar's section as a screen reader's list item.
+component SectionItem {
+    in property <Segment> segment;
+    in property <int> index;
+    width: 100%;
+    height: 100%;
+    accessible-role: list-item;
+    accessible-label: self.segment.detail == "" ? self.segment.name : self.segment.name + " " + self.segment.detail;
+    accessible-description: self.segment.description;
+    accessible-item-index: self.index;
+}
+
+// A section a click acts on (`Segment.key`): only these offer screen readers a default action.
+component PickableSection inherits SectionItem {
+    callback picked();
+    accessible-action-default => {
+        root.picked();
+    }
+}
+
 component SegmentBar {
     in property <[Segment]> segments;
     in property <string> note;
@@ -251,12 +271,14 @@ component SegmentBar {
     for s[i] in root.segments: Rectangle {
             x: s.start * root.share + i * root.gap;
             width: s.fraction * root.share;
-            accessible-role: list-item;
-            accessible-label: s.detail == "" ? s.name : s.name + " " + s.detail;
-            accessible-description: s.description;
-            accessible-item-index: i;
-            accessible-action-default => {
-                if s.key != "" {
+            if s.key == "": SectionItem {
+                segment: s;
+                index: i;
+            }
+            if s.key != "": PickableSection {
+                segment: s;
+                index: i;
+                picked => {
                     root.picked(s.key);
                 }
             }
@@ -1796,19 +1818,29 @@ component Table {
         title: self.column == 0 ? "Name" : Columns.titles[self.column - 1],
         about: self.column == 0 ? Columns.name-about : Columns.abouts[self.column - 1],
     };
-    property <length> row-height: Theme.picnic ? 31px : 28px;
+    out property <length> row-height: Theme.picnic ? 31px : 28px;
 
     // Scrolls the focused row into view.
-    public function reveal() {
-        if root.current < 0 {
+    function reveal() {
+        root.reveal-row(root.current);
+    }
+
+    // Scrolls row `i` into the list's view; none for -1.
+    public function reveal-row(i: int) {
+        if i < 0 {
             return;
         }
-        if root.current * root.row-height + view.content-y < 0 {
-            view.content-y = -root.current * root.row-height;
+        if i * root.row-height + view.content-y < 0 {
+            view.content-y = -i * root.row-height;
         }
-        if (root.current + 1) * root.row-height + view.content-y > view.visible-height {
-            view.content-y = view.visible-height - (root.current + 1) * root.row-height;
+        if (i + 1) * root.row-height + view.content-y > view.visible-height {
+            view.content-y = view.visible-height - (i + 1) * root.row-height;
         }
+    }
+
+    // Row `i`'s top, in the window.
+    public pure function row-top(i: int) -> length {
+        view.absolute-position.y + i * root.row-height + view.content-y
     }
 
     function press(key: TableKey) {
@@ -2321,8 +2353,9 @@ export component MainWindow inherits Window {
     in-out property <string> search;
     callback pick(int);
     callback key(TableKey);
-    // A click on a bar's section, by its key: selects or deselects its app's row (#88).
-    callback bar-picked(string);
+    // A click on a bar's section, by its key: selects or deselects its app's row, or opens the
+    // fold (#88). Gives the row to scroll to, -1 for none.
+    callback bar-picked(string) -> int;
     callback deselect();
     // A click on a column's header, 0 for RAM in use.
     callback sort-clicked(int);
@@ -2337,10 +2370,21 @@ export component MainWindow inherits Window {
     property <int> asking-kill: 1;
     property <int> asking-end: 2;
 
-    // The model selects the row (or opens the fold); then the table scrolls to it.
+    // The model selects the row or opens the fold; then the table, and in a short window the
+    // page, scroll to its row.
     function pick-section(key: string) {
-        root.bar-picked(key);
-        table.reveal();
+        let i = root.bar-picked(key);
+        if i < 0 {
+            return;
+        }
+        table.reveal-row(i);
+        let top = table.row-top(i) - page.absolute-position.y;
+        let lowest = page.visible-height - page.content-height;
+        if top < 0 {
+            page.content-y = min(0, page.content-y - top);
+        } else if top + table.row-height > page.visible-height {
+            page.content-y = max(lowest, page.content-y - (top + table.row-height - page.visible-height));
+        }
     }
 
     function ask-end() {
