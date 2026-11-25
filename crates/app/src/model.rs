@@ -18,7 +18,7 @@ use sebwatch_core::memory::Zswap;
 const NAMED: usize = 5;
 /// Series colours: the RAM bar's five apps and two for the swap and VRAM bars' own top apps.
 const SERIES: usize = 7;
-/// Segments at least this share of their bar show their size inside; smaller ones in the legend.
+/// Segments at least this share of their bar also show their size inside, where it fits.
 /// About 58 px at the default window width, room for "16.6 GB".
 const LABELLED: f32 = 0.075;
 /// Apps listed before the "N more apps" fold.

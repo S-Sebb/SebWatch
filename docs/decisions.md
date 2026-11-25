@@ -46,3 +46,5 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   shortcut (`setForeignShortcut`) is recorded but stays inactive, so the key does nothing until
   the next login; marking it present makes it work at once. Not `X-KDE-Shortcuts` in the desktop
   file: that sets a default that clashes with System Monitor's and that unbinding can't take back.
+- **Bar sizes:** every section's size is in the legend; wide sections also show it inside the
+  bar (mockup approved, #87). Seb, 2026-11-25.

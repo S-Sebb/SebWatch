@@ -1,0 +1,3 @@
+# The 2024 style (cargo fmt takes it from the workspace edition) also for rustfmt run alone,
+# e.g. by a pre-commit hook that passes --edition 2021.
+style_edition = "2024"
