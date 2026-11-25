@@ -3697,7 +3697,7 @@ dependencies = [
 
 [[package]]
 name = "sebwatch"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libc",
  "png",
@@ -3709,7 +3709,7 @@ dependencies = [
 
 [[package]]
 name = "sebwatch-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
 ]
