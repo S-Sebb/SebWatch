@@ -196,9 +196,21 @@ fn refill<T: Clone + PartialEq + 'static>(model: &ModelRc<T>, items: Vec<T>) -> 
     None
 }
 
+/// Draws the icons again when the window's scale factor changed.
+fn rescale(window: &MainWindow) {
+    VIEW.with_borrow_mut(|view| {
+        if view.scale_icons(window.window().scale_factor()) {
+            show(window, view.render());
+        }
+    });
+}
+
 /// Shows a new reading.
 fn present(window: &MainWindow, snapshot: model::Snapshot) {
-    VIEW.with_borrow_mut(|view| show(window, view.update(snapshot)));
+    VIEW.with_borrow_mut(|view| {
+        view.scale_icons(window.window().scale_factor());
+        show(window, view.update(snapshot))
+    });
 }
 
 /// Art, the first reading, clicks and keys in the table, sorting, searching, pausing, End and
@@ -426,9 +438,22 @@ fn main() -> Result<(), slint::PlatformError> {
     let drawn = Arc::new(AtomicBool::new(false));
     let notified = window.window().set_rendering_notifier({
         let drawn = drawn.clone();
+        let weak = window.as_weak();
+        let mut scale = 0.0;
         move |state, _| {
             if let RenderingState::AfterRendering = state {
                 drawn.store(true, Ordering::Relaxed);
+                // Moved to a screen of another scale: icons for it now, even while paused.
+                let Some(window) = weak.upgrade() else { return };
+                if window.window().scale_factor() != scale {
+                    scale = window.window().scale_factor();
+                    let weak = weak.clone();
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        if let Some(window) = weak.upgrade() {
+                            rescale(&window);
+                        }
+                    });
+                }
             }
         }
     });

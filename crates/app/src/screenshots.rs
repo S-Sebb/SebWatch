@@ -298,6 +298,8 @@ fn screenshots() {
         ] {
             window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor });
             window.set_size(PhysicalSize::new(width, height));
+            // Icons for the new scale, as the next reading would load them.
+            crate::present(&ui, crate::sample::snapshot());
             let small = Shot {
                 window: window.clone(),
                 now: now.clone(),
