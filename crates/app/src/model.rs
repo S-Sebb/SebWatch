@@ -1694,10 +1694,12 @@ mod tests {
         // Its graphs go (the Intel GPU's stays); CPU and Disk keep theirs.
         let graphed: Vec<_> = asleep.tiles.iter().map(|t| t.graphed).collect();
         assert_eq!(graphed, [true, true, false, true]);
-        assert!(asleep
-            .rows
-            .iter()
-            .all(|r| r.gpu.as_str() == NONE && r.vram.as_str() == NONE));
+        assert!(
+            asleep
+                .rows
+                .iter()
+                .all(|r| r.gpu.as_str() == NONE && r.vram.as_str() == NONE)
+        );
         let none = Snapshot {
             vram: None,
             nvidia_percent: None,
@@ -2292,9 +2294,10 @@ mod tests {
             .iter()
             .filter(|r| r.kind == RowKind::App)
             .collect();
-        assert!(apps
-            .iter()
-            .all(|r| r.disk == NA && r.gpu == NA && r.vram == NA));
+        assert!(
+            apps.iter()
+                .all(|r| r.disk == NA && r.gpu == NA && r.vram == NA)
+        );
         let disk = |name: &str| {
             let row = shown.rows.iter().find(|r| r.name == name).unwrap();
             row.disk.to_string()
