@@ -155,11 +155,11 @@ fn watch(window: &MainWindow) {
 }
 
 fn show(window: &MainWindow, shown: model::Shown) {
-    window.set_memory(shown.memory);
-    window.set_swap(shown.swap);
+    window.set_memory(rebar(window.get_memory(), shown.memory));
+    window.set_swap(rebar(window.get_swap(), shown.swap));
     window.set_swap_info(shown.swap_info);
     window.set_has_vram(shown.vram.is_some());
-    window.set_vram(shown.vram.unwrap_or_default());
+    window.set_vram(rebar(window.get_vram(), shown.vram.unwrap_or_default()));
     window.global::<Columns>().set_igpu(shown.igpu.into());
     if let Some(new) = refill(&window.get_tiles(), shown.tiles) {
         window.set_tiles(new);
@@ -203,6 +203,14 @@ fn rescale(window: &MainWindow) {
             show(window, view.render());
         }
     });
+}
+
+/// `new` with `old`'s segments model refilled, so a hovered segment keeps its ring and tooltip
+/// across refreshes (#86).
+fn rebar(old: Bar, mut new: Bar) -> Bar {
+    let segments = std::mem::take(&mut new.segments).iter().collect();
+    new.segments = refill(&old.segments, segments).unwrap_or(old.segments);
+    new
 }
 
 /// Shows a new reading.

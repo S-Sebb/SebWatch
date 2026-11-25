@@ -649,6 +649,76 @@ fn screenshots() {
     shot.save(&shot.render(), &dir.join("live-light.png"));
 }
 
+/// #86: a bar segment's hover ring and tooltip stay while the pointer rests on it through
+/// refreshes. The only test here that runs by default, so the only one in a plain `cargo test`
+/// to set the platform.
+#[test]
+fn bar_hover_survives_refreshes() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    let now = Rc::new(Cell::new(Duration::ZERO));
+    slint::platform::set_platform(Box::new(Offscreen {
+        window: window.clone(),
+        now: now.clone(),
+    }))
+    .unwrap();
+    let shot = Shot {
+        window: window.clone(),
+        now,
+        width: 1000,
+        height: 844,
+    };
+    let ui = MainWindow::new().unwrap();
+    ui.global::<Theme>().set_choice(ThemeChoice::Dark);
+    crate::setup(
+        &ui,
+        crate::sample::snapshot(),
+        Default::default(),
+        sample_system(),
+        |_| {},
+        |_| {},
+        |_| {},
+    );
+    ui.show().unwrap();
+    window.set_size(PhysicalSize::new(shot.width, shot.height));
+    let theme = ui.global::<Theme>();
+    let android = theme.get_series().row_data(1).unwrap();
+    let (x, y) = find(&shot.render(), shot.width, android);
+    shot.pointer(x, y, false);
+    shot.wait(Duration::from_millis(800));
+    // The ring's top edge, 3 px above the bar (`find` gives a point 12 px below its top), and
+    // the tooltip's box below the bar.
+    let ring = |pixels: &[Rgb8Pixel], x: f32| {
+        same(
+            pixels[((y - 15.0) as u32 * shot.width + x as u32) as usize],
+            theme.get_fg(),
+        )
+    };
+    let hovered = |pixels: &[Rgb8Pixel]| {
+        let tip = pixels[(y as u32 + 20) as usize * shot.width as usize..]
+            [..100 * shot.width as usize]
+            .iter()
+            .filter(|&&p| same(p, theme.get_popup()))
+            .count();
+        (ring(pixels, x), tip > 100)
+    };
+    let first = shot.render();
+    assert_eq!(hovered(&first), (true, true), "hovered");
+    // Readings whose sizes change, so every segment's data changes too.
+    let readings = crate::sample::minute(crate::sample::snapshot, Instant::now());
+    for (i, reading) in readings.into_iter().take(3).enumerate() {
+        crate::present(&ui, reading);
+        assert_eq!(hovered(&shot.render()), (true, true), "after refresh {i}");
+    }
+    // Another app's segment takes the ring over; then off the bar, nothing is hovered.
+    let claude = theme.get_series().row_data(0).unwrap();
+    let (other, _) = find(&first, shot.width, claude);
+    shot.pointer(other, y, false);
+    let pixels = shot.render();
+    assert!(ring(&pixels, other) && !ring(&pixels, x), "moved");
+    shot.pointer(4.0, 4.0, false);
+    assert_eq!(hovered(&shot.render()), (false, false), "left");
+}
+
 /// `scripts/bench processes`: the CPU one refresh costs, reading and showing it, with the app
 /// that holds the group `SEBWATCH_BENCH_GROUP` (relative to the cgroup root) folded, then
 /// expanded. Prints one line each.
