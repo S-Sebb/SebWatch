@@ -7,5 +7,5 @@ Rust + Slint desktop app, Cargo workspace (`crates/core`, `crates/app`). Read be
 - `docs/decisions.md`: settled decisions; record new ones there.
 - `docs/release.md`: release steps and the patch-note format.
 
-Backlog: GitHub issues, milestone `0.1` for the first usable version, `Later` for the rest.
+Backlog: GitHub issues, in the milestone of the next version (one past the latest release tag), `Later` for the rest.
 Visual changes get a rendered mockup approved before they are built.
