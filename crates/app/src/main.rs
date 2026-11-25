@@ -289,11 +289,9 @@ fn setup(
         let weak = window.as_weak();
         move |key| {
             act(&|view| view.reveal(&key));
-            // A search that hid the app was cleared.
-            if VIEW.with_borrow(|view| view.search.is_empty()) {
-                weak.unwrap().set_search("".into());
-            }
-            VIEW.with_borrow(|view| view.revealed(&key))
+            let (search, row) = VIEW.with_borrow(|view| (view.search.clone(), view.revealed(&key)));
+            weak.unwrap().set_search(search.into());
+            row
         }
     });
     window.on_deselect({

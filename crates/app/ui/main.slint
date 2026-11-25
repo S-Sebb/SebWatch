@@ -1818,7 +1818,7 @@ component Table {
         title: self.column == 0 ? "Name" : Columns.titles[self.column - 1],
         about: self.column == 0 ? Columns.name-about : Columns.abouts[self.column - 1],
     };
-    out property <length> row-height: Theme.picnic ? 31px : 28px;
+    property <length> row-height: Theme.picnic ? 31px : 28px;
 
     // Scrolls the focused row into view.
     function reveal() {
@@ -1830,17 +1830,28 @@ component Table {
         if i < 0 {
             return;
         }
-        if i * root.row-height + view.content-y < 0 {
-            view.content-y = -i * root.row-height;
+        if root.row-y(i) + view.content-y < 0 {
+            view.content-y = -root.row-y(i);
         }
-        if (i + 1) * root.row-height + view.content-y > view.visible-height {
-            view.content-y = view.visible-height - (i + 1) * root.row-height;
+        if root.row-y(i) + root.row-h(i) + view.content-y > view.visible-height {
+            view.content-y = view.visible-height - root.row-y(i) - root.row-h(i);
         }
     }
 
     // Row `i`'s top, in the window.
     public pure function row-top(i: int) -> length {
-        view.absolute-position.y + i * root.row-height + view.content-y
+        view.absolute-position.y + root.row-y(i) + view.content-y
+    }
+
+    // Every row is `row-height` high but the focused remainder row, `tall`, which shows its
+    // explanation below (`RowView.show-tip`) and reports the extra height.
+    property <int> tall: root.current >= 0 && scope.has-focus && root.keyboard && root.rows[root.current].tip != "" ? root.current : -1;
+    property <length> tall-extra;
+    pure function row-y(i: int) -> length {
+        i * root.row-height + (root.tall >= 0 && root.tall < i ? root.tall-extra : 0)
+    }
+    public pure function row-h(i: int) -> length {
+        root.row-height + (i == root.tall ? root.tall-extra : 0)
     }
 
     function press(key: TableKey) {
@@ -2207,6 +2218,11 @@ component Table {
                     index: i;
                     selected: i == root.current;
                     focused: i == root.current && scope.has-focus && root.keyboard;
+                    changed height => {
+                        if self.focused {
+                            root.tall-extra = self.height - root.row-height;
+                        }
+                    }
                     clicked => {
                         root.keyboard = false;
                         scope.focus();
@@ -2373,6 +2389,10 @@ export component MainWindow inherits Window {
     // The model selects the row or opens the fold; then the table, and in a short window the
     // page, scroll to its row.
     function pick-section(key: string) {
+        // Not under the End or Kill question: answering it acts on the selected row.
+        if root.asking != 0 {
+            return;
+        }
         let i = root.bar-picked(key);
         if i < 0 {
             return;
@@ -2382,8 +2402,8 @@ export component MainWindow inherits Window {
         let lowest = page.visible-height - page.content-height;
         if top < 0 {
             page.content-y = min(0, page.content-y - top);
-        } else if top + table.row-height > page.visible-height {
-            page.content-y = max(lowest, page.content-y - (top + table.row-height - page.visible-height));
+        } else if top + table.row-h(i) > page.visible-height {
+            page.content-y = max(lowest, page.content-y - (top + table.row-h(i) - page.visible-height));
         }
     }
 
