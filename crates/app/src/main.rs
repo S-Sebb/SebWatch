@@ -284,6 +284,26 @@ fn setup(
         let act = act.clone();
         move |index| act(&|view| view.expand(index as usize))
     });
+    window.on_bar_picked({
+        let act = act.clone();
+        let weak = window.as_weak();
+        move |key| {
+            act(&|view| view.reveal(&key));
+            // A search that hid the app was cleared.
+            if VIEW.with_borrow(|view| view.search.is_empty()) {
+                weak.unwrap().set_search("".into());
+            }
+        }
+    });
+    window.on_deselect({
+        let act = act.clone();
+        move || {
+            act(&|view| {
+                view.deselect();
+                false
+            })
+        }
+    });
     window.on_key(move |key| act(&|view| view.press(key)));
     let weak = window.as_weak();
     window.on_end(move || end(&weak.unwrap(), false));

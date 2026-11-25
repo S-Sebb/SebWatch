@@ -439,6 +439,33 @@ impl View {
         true
     }
 
+    /// A click on a bar's section, by its key (`Segment::key`). An app's selects its row,
+    /// first clearing a search that hides it and opening the fold it is in; its selected row is
+    /// deselected instead. Other apps opens the fold. True when it opened the fold.
+    pub fn reveal(&mut self, key: &str) -> bool {
+        let app = key != MORE;
+        if app && self.focus.as_ref().is_some_and(|f| f.key == key) {
+            self.focus = None;
+            return false;
+        }
+        let listed = |view: &mut Self| {
+            view.render();
+            view.tree.iter().position(|n| n.key == key)
+        };
+        if self.searching().is_some() && (!app || listed(self).is_none()) {
+            self.search.clear();
+        }
+        let opened = (!app || listed(self).is_none()) && self.expanded.insert(MORE.into());
+        if let Some(i) = listed(self).filter(|_| app) {
+            self.focus_on(i);
+        }
+        opened
+    }
+
+    pub fn deselect(&mut self) {
+        self.focus = None;
+    }
+
     /// The selected row, if any.
     pub fn selected(&self) -> Option<Selected> {
         let node = &self.tree[self.focus.as_ref()?.index];
@@ -999,8 +1026,9 @@ fn others(
         .iter()
         .filter(|a| measure(a) > 0 && !named.iter().any(|n| n.key == a.key))
         .collect();
-    (!rest.is_empty()).then(|| {
-        segment(
+    (!rest.is_empty()).then(|| Segment {
+        key: MORE.into(),
+        ..segment(
             SegmentKind::Other,
             "Other apps",
             rest.iter().map(|a| measure(a)).sum(),
@@ -1072,6 +1100,7 @@ fn segment(kind: SegmentKind, name: &str, size: u64, total: u64, notes: &[String
         .into(),
         notes: strings(notes),
         description: "".into(),
+        key: "".into(),
     }
 }
 
@@ -1110,6 +1139,7 @@ fn app_segment(
         )
         .into(),
         notes: strings(&notes),
+        key: app.key.as_str().into(),
         ..segment(SegmentKind::App, &short(&app.name), size, total, &[])
     }
 }
@@ -1986,6 +2016,51 @@ mod tests {
         view.search = "kate".into();
         let shown = view.render();
         assert_eq!(names(&shown.memory), names(&all.memory));
+    }
+
+    #[test]
+    fn bar_section_click_selects_its_row() {
+        let mut view = View::default();
+        let shown = view.update(crate::sample::snapshot());
+        let memory: Vec<String> = slint::Model::iter(&shown.memory.segments)
+            .map(|s| s.key.into())
+            .collect();
+        let selected = |view: &mut View| {
+            let shown = view.render();
+            (shown.focus, shown.selected.map(|s| s.key))
+        };
+        // An app's section selects its row; again, deselects it.
+        assert_eq!(memory[1], "Android emulator");
+        assert!(!view.reveal(&memory[1]));
+        assert_eq!(selected(&mut view), (1, Some(memory[1].clone())));
+        view.reveal(&memory[1]);
+        assert_eq!(selected(&mut view), (-1, None));
+        // Searched away: the search is cleared first.
+        view.search = "kate".into();
+        view.reveal(&memory[1]);
+        assert_eq!(view.search, "");
+        assert_eq!(selected(&mut view), (1, Some(memory[1].clone())));
+        // Only app sections and Other apps have keys; Other apps opens the fold.
+        for bar in [&shown.memory, &shown.swap, shown.vram.as_ref().unwrap()] {
+            for seg in slint::Model::iter(&bar.segments) {
+                let key = match seg.kind {
+                    SegmentKind::App => seg.key.is_empty(),
+                    SegmentKind::Other => seg.key != MORE,
+                    _ => !seg.key.is_empty(),
+                };
+                assert!(!key, "{}: {:?}", seg.name, seg.key);
+            }
+        }
+        let folded = view.render().rows.len();
+        assert!(view.reveal(MORE));
+        assert!(view.render().rows.len() > folded);
+        // An app in the fold, e.g. a swap bar's: the fold opens and its row is selected.
+        let mut view = View::default();
+        let s = crate::sample::snapshot();
+        let last = view.sort.apply(&s.apps).last().unwrap().key.clone();
+        view.update(s);
+        assert!(view.reveal(&last));
+        assert_eq!(view.render().selected.map(|s| s.key), Some(last));
     }
 
     #[test]

@@ -650,10 +650,10 @@ fn screenshots() {
 }
 
 /// #86: a bar segment's hover ring and tooltip stay while the pointer rests on it through
-/// refreshes. The only test here that runs by default, so the only one in a plain `cargo test`
+/// refreshes. #88: a click on it selects its app's row. The only test here that runs by default, so the only one in a plain `cargo test`
 /// to set the platform.
 #[test]
-fn bar_hover_survives_refreshes() {
+fn bar_section_hover_and_click() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     let now = Rc::new(Cell::new(Duration::ZERO));
     slint::platform::set_platform(Box::new(Offscreen {
@@ -717,6 +717,20 @@ fn bar_hover_survives_refreshes() {
     assert!(ring(&pixels, other) && !ring(&pixels, x), "moved");
     shot.pointer(4.0, 4.0, false);
     assert_eq!(hovered(&shot.render()), (false, false), "left");
+
+    // #88: a click on an app's section selects its row and offers End; a second click, or
+    // Escape, deselects it.
+    shot.pointer(x, y, true);
+    assert_eq!(
+        (ui.get_current(), ui.get_end_name().as_str()),
+        (1, "Android emulator · guide35")
+    );
+    shot.pointer(x, y, true);
+    assert_eq!(ui.get_current(), -1);
+    shot.pointer(x, y, true);
+    assert_eq!(ui.get_current(), 1);
+    shot.tap(Key::Escape);
+    assert_eq!(ui.get_current(), -1);
 }
 
 /// `scripts/bench processes`: the CPU one refresh costs, reading and showing it, with the app
