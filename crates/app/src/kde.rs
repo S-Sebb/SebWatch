@@ -11,6 +11,10 @@ use zbus::fdo::RequestNameFlags;
 const NAME: &str = "io.github.S_Sebb.SebWatch";
 /// Meta+Esc as Qt's key code: Qt::META | Qt::Key_Escape.
 const META_ESC: i32 = 0x1000_0000 | 0x0100_0000;
+/// KGlobalAccel's `setShortcut` flags: mark the action present (active), and store the keys given
+/// rather than the ones saved before.
+const SET_PRESENT: u32 = 2;
+const NO_AUTOLOADING: u32 = 4;
 /// KGlobalAccel's action ids: component, action, and their names shown in System Settings.
 const SYSTEM_MONITOR: &[&str] = &[
     "org.kde.plasma-systemmonitor.desktop",
@@ -108,7 +112,12 @@ pub fn bind_win_esc() -> zbus::Result<()> {
     keys.retain(|&key| key != META_ESC);
     accel.call::<_, _, ()>("setForeignShortcut", &(SYSTEM_MONITOR, keys))?;
     accel.call::<_, _, ()>("doRegister", &(SEBWATCH,))?;
-    accel.call::<_, _, ()>("setForeignShortcut", &(SEBWATCH, vec![META_ESC]))?;
+    // Set as present, the way an app sets its own shortcut: a foreign one stays inactive, not
+    // grabbed, until KGlobalAccel reloads the entry at the next login.
+    let _: Vec<i32> = accel.call(
+        "setShortcut",
+        &(SEBWATCH, vec![META_ESC], SET_PRESENT | NO_AUTOLOADING),
+    )?;
     Ok(())
 }
 
