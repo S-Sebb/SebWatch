@@ -569,6 +569,11 @@ impl View {
         });
     }
 
+    /// Draws the icons for the window's scale factor.
+    pub fn scale_icons(&mut self, scale_factor: f32) {
+        self.icons.scale(scale_factor);
+    }
+
     /// Shows a new reading.
     pub fn update(&mut self, snapshot: Snapshot) -> Shown {
         self.history.push(snapshot.taken, readings(&snapshot));

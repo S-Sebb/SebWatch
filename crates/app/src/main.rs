@@ -198,7 +198,10 @@ fn refill<T: Clone + PartialEq + 'static>(model: &ModelRc<T>, items: Vec<T>) -> 
 
 /// Shows a new reading.
 fn present(window: &MainWindow, snapshot: model::Snapshot) {
-    VIEW.with_borrow_mut(|view| show(window, view.update(snapshot)));
+    VIEW.with_borrow_mut(|view| {
+        view.scale_icons(window.window().scale_factor());
+        show(window, view.update(snapshot))
+    });
 }
 
 /// Art, the first reading, clicks and keys in the table, sorting, searching, pausing, End and
