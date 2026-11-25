@@ -18,7 +18,7 @@ use sebwatch_core::memory::Zswap;
 const NAMED: usize = 5;
 /// Series colours: the RAM bar's five apps and two for the swap and VRAM bars' own top apps.
 const SERIES: usize = 7;
-/// Segments at least this share of their bar show their size inside; smaller ones in the legend.
+/// Segments at least this share of their bar also show their size inside, where it fits.
 /// About 58 px at the default window width, room for "16.6 GB".
 const LABELLED: f32 = 0.075;
 /// Apps listed before the "N more apps" fold.
@@ -1694,12 +1694,10 @@ mod tests {
         // Its graphs go (the Intel GPU's stays); CPU and Disk keep theirs.
         let graphed: Vec<_> = asleep.tiles.iter().map(|t| t.graphed).collect();
         assert_eq!(graphed, [true, true, false, true]);
-        assert!(
-            asleep
-                .rows
-                .iter()
-                .all(|r| r.gpu.as_str() == NONE && r.vram.as_str() == NONE)
-        );
+        assert!(asleep
+            .rows
+            .iter()
+            .all(|r| r.gpu.as_str() == NONE && r.vram.as_str() == NONE));
         let none = Snapshot {
             vram: None,
             nvidia_percent: None,
@@ -2294,10 +2292,9 @@ mod tests {
             .iter()
             .filter(|r| r.kind == RowKind::App)
             .collect();
-        assert!(
-            apps.iter()
-                .all(|r| r.disk == NA && r.gpu == NA && r.vram == NA)
-        );
+        assert!(apps
+            .iter()
+            .all(|r| r.disk == NA && r.gpu == NA && r.vram == NA));
         let disk = |name: &str| {
             let row = shown.rows.iter().find(|r| r.name == name).unwrap();
             row.disk.to_string()

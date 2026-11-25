@@ -235,8 +235,8 @@ its PID. Only the user's own processes; SebWatch has no root.
   the RAM bar's five, then to the swap and VRAM bars' apps alternately, rank by rank, so each
   bar's biggest app always has one; a bar names its apps down to the first left without a colour
   and counts the rest as Other apps. A colour stays with its app while some bar names it.
-- A segment of at least 7.5% of its bar shows its size inside; a smaller one shows it in the
-  legend.
+- Every segment's size is in the legend; one of at least 7.5% of its bar, wide enough for it,
+  shows it inside too.
 - Sizes are binary with KDE's short names (1 GB = 1024 MB); a unit steps up at 1000 of the one
   below, so no figure has four digits.
 - CPU tile: the apps' CPU summed, of the logical cores. GPU tile: the NVIDIA device's busy %;
