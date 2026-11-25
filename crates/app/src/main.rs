@@ -284,6 +284,20 @@ fn setup(
         let act = act.clone();
         move |index| act(&|view| view.expand(index as usize))
     });
+    window.on_bar_picked({
+        let act = act.clone();
+        let weak = window.as_weak();
+        move |key| {
+            act(&|view| view.reveal(&key));
+            let (search, row) = VIEW.with_borrow(|view| (view.search.clone(), view.revealed(&key)));
+            weak.unwrap().set_search(search.into());
+            row
+        }
+    });
+    window.on_deselect({
+        let act = act.clone();
+        move || act(&|view| view.deselect())
+    });
     window.on_key(move |key| act(&|view| view.press(key)));
     let weak = window.as_weak();
     window.on_end(move || end(&weak.unwrap(), false));

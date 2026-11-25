@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # What a screen reader sees: runs the app on a headless KWin (`--virtual`) with its own D-Bus
 # session and accessibility bus, so nothing shows on the desktop, and reads its AT-SPI tree.
-# Checks the tiles and column headers say what they measure, selects a row through AT-SPI and
+# Checks the tiles and column headers say what they measure, that only bar sections a click acts
+# on offer an action, selects a row through AT-SPI and
 # checks the selection stays on it across a refresh, that the click doesn't expand it, that End
 # and Kill name it, that Kill asks first with Cancel focused (cancelled: nothing is ended or
 # killed), and that Pause turns into Resume with its strip. One line per check; the tree in
@@ -140,12 +141,29 @@ def check(name, ok, why):
 check("rows have names and values", len(rows) > 3 and all(r["name"] for r in rows),
       f"{len(rows)} rows with values")
 check("app rows say whether they are expanded", all(r["description"].startswith("collapsed, ") for r in rows),
-      rows[0]["description"])
+      rows[:1])
 button = [n for n in nodes if n["role"] == "button" and n["name"] == "Menu"]
 check("menu button", len(button) == 1, "no button named Menu")
 segments = [n for n in nodes if n["role"] == "list item" and "% of" in n["description"]]
 check("bar segments have names, values and tooltips", len(segments) > 5 and all(s["name"] for s in segments),
       f"{len(segments)} segments")
+# #88: only sections a click acts on (apps; Other apps when the table has a fold) offer an action.
+def actions(node):
+    try:
+        return node.queryAction().nActions
+    except (GLib.Error, NotImplementedError):
+        return 0
+inert = {"Free", "Free swap", "File cache", "Zswap pool", "Closed apps (cache)",
+         "Kernel, drivers and unattributed", "Driver and other", "Used swap"}
+acting = {s["name"] for s in segments if actions(s["node"])}
+check("only bar sections a click acts on offer an action", acting and not acting & inert,
+      f"with an action: {sorted(acting)}")
+def sections():
+    """The app sections with an action, by name."""
+    return {s["name"]: s["node"] for s in nodes if s["role"] == "list item" and "% of" in s["description"]
+            and s["name"] not in inert and s["name"] != "Other apps" and actions(s["node"])}
+def focused_rows():
+    return [r["name"] for r in app_rows() if "focused" in r["states"]]
 def items_of(name):
     lists = [n["node"] for n in nodes if n["role"] == "list box" and n["name"] == name]
     return [dict(name=c.name, description=c.description) for c in lists[0]] if lists else []
@@ -235,12 +253,29 @@ dump()
 b = buttons()
 check("Kill asks first with Cancel focused", "Kill" in b and "Cancel" in b and "focused" in b["Cancel"]["states"],
       f"buttons {sorted(b)}, Cancel {b.get('Cancel', {}).get('states')}")
+# A bar section activated under the question changes nothing: Kill would act on the new row.
+other = next((n for n in sections() if not name.startswith(n.rstrip("…"))), None)
+if other:
+    sections()[other].queryAction().doAction(0)
+    time.sleep(1)
+    dump()
+ends = [b.split(" ", 1)[1] for b in buttons() if b.startswith("End ")]
+check("a bar section does nothing under the question", other and len(ends) == 1 and name.startswith(ends[0]),
+      f"{other!r} activated, End names {ends}")
 if "Cancel" in b:
     press("Cancel")
 time.sleep(1)
 dump()
 b = buttons()
 check("Cancel closes it and the app runs on", "Cancel" not in b and name in [r["name"] for r in app_rows()], f"buttons {sorted(b)}")
+
+# A bar section's action selects its app's row (#88).
+if other:
+    sections()[other].queryAction().doAction(0)
+    time.sleep(1)
+    dump()
+check("a bar section selects its app's row", other and [f.startswith(other.rstrip("…")) for f in focused_rows()] == [True],
+      f"{other!r} activated, focused {focused_rows()}")
 
 # Pause freezes the window: Resume, and the strip saying since when.
 press("Pause")

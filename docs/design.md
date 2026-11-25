@@ -69,7 +69,10 @@ menu button sits in the bars card's top-right corner, after Memory's total.
 
 **Selecting, pausing, End and Kill** (#42, #63). A click selects a row (the theme's selection
 colour); only its arrow, or Right and Left, Enter and Space, expands it. The selection follows
-its row's key across refreshes and searches, and the table keeps its scroll position. With a
+its row's key across refreshes and searches, and the table keeps its scroll position. A click
+on an app's section in a bar selects its row too and scrolls to it, first clearing a search
+that hides it and opening the fold it is in; on its selected section, or Escape, deselects it.
+Other apps opens the fold; other sections do nothing (#88). With a
 row selected, "End <name>" and "Kill <name>" buttons sit beside the search field, sharing the
 room up to Pause and ending a long name in an ellipsis (the tooltip has it whole, with the PID
 of a process). The row's menu (right click, the menu key or Shift+F10) has the same two, with

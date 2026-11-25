@@ -439,6 +439,45 @@ impl View {
         true
     }
 
+    /// A click on a bar's section, by its key (`Segment::key`). An app's selects its row,
+    /// first clearing a search that hides it and opening the fold it is in; its selected row is
+    /// deselected instead. Other apps opens the fold. True when it opened the fold.
+    pub fn reveal(&mut self, key: &str) -> bool {
+        let app = key != MORE;
+        if app && self.focus.as_ref().is_some_and(|f| f.key == key) {
+            self.focus = None;
+            return false;
+        }
+        if self.row(key).is_none() && self.searching().is_some() {
+            self.search.clear();
+            self.render();
+        }
+        let opened = (!app || self.row(key).is_none()) && self.expanded.insert(MORE.into());
+        if opened {
+            self.render();
+        }
+        if let Some(i) = self.row(key).filter(|_| app) {
+            self.focus_on(i);
+        }
+        opened
+    }
+
+    /// The row a click on the section with this key brought into view, -1 for none: Other
+    /// apps' fold, or the app's row while it is selected.
+    pub fn revealed(&self, key: &str) -> i32 {
+        let shown = key == MORE || self.focus.as_ref().is_some_and(|f| f.key == key);
+        self.row(key).filter(|_| shown).map_or(-1, |i| i as i32)
+    }
+
+    fn row(&self, key: &str) -> Option<usize> {
+        self.tree.iter().position(|n| n.key == key)
+    }
+
+    pub fn deselect(&mut self) -> bool {
+        self.focus = None;
+        false
+    }
+
     /// The selected row, if any.
     pub fn selected(&self) -> Option<Selected> {
         let node = &self.tree[self.focus.as_ref()?.index];
@@ -999,8 +1038,10 @@ fn others(
         .iter()
         .filter(|a| measure(a) > 0 && !named.iter().any(|n| n.key == a.key))
         .collect();
-    (!rest.is_empty()).then(|| {
-        segment(
+    (!rest.is_empty()).then(|| Segment {
+        // The table folds only past LISTED apps; with fewer, Other apps has no row to open.
+        key: if apps.len() > LISTED { MORE } else { "" }.into(),
+        ..segment(
             SegmentKind::Other,
             "Other apps",
             rest.iter().map(|a| measure(a)).sum(),
@@ -1072,6 +1113,7 @@ fn segment(kind: SegmentKind, name: &str, size: u64, total: u64, notes: &[String
         .into(),
         notes: strings(notes),
         description: "".into(),
+        key: "".into(),
     }
 }
 
@@ -1110,6 +1152,7 @@ fn app_segment(
         )
         .into(),
         notes: strings(&notes),
+        key: app.key.as_str().into(),
         ..segment(SegmentKind::App, &short(&app.name), size, total, &[])
     }
 }
@@ -1986,6 +2029,68 @@ mod tests {
         view.search = "kate".into();
         let shown = view.render();
         assert_eq!(names(&shown.memory), names(&all.memory));
+    }
+
+    #[test]
+    fn bar_section_click_selects_its_row() {
+        let mut view = View::default();
+        let shown = view.update(crate::sample::snapshot());
+        let memory: Vec<String> = slint::Model::iter(&shown.memory.segments)
+            .map(|s| s.key.into())
+            .collect();
+        let selected = |view: &mut View| {
+            let shown = view.render();
+            (shown.focus, shown.selected.map(|s| s.key))
+        };
+        // An app's section selects its row; again, deselects it.
+        assert_eq!(memory[1], "Android emulator");
+        assert!(!view.reveal(&memory[1]));
+        assert_eq!(selected(&mut view), (1, Some(memory[1].clone())));
+        assert_eq!(view.revealed(&memory[1]), 1);
+        view.reveal(&memory[1]);
+        assert_eq!(selected(&mut view), (-1, None));
+        assert_eq!(view.revealed(&memory[1]), -1);
+        // Searched away: the search is cleared first.
+        view.search = "kate".into();
+        view.render();
+        view.reveal(&memory[1]);
+        assert_eq!(view.search, "");
+        assert_eq!(selected(&mut view), (1, Some(memory[1].clone())));
+        // Only app sections and Other apps have keys; Other apps opens the fold.
+        for bar in [&shown.memory, &shown.swap, shown.vram.as_ref().unwrap()] {
+            for seg in slint::Model::iter(&bar.segments) {
+                let ok = match seg.kind {
+                    SegmentKind::App => !seg.key.is_empty(),
+                    SegmentKind::Other => seg.key == MORE,
+                    _ => seg.key.is_empty(),
+                };
+                assert!(ok, "{}: {:?}", seg.name, seg.key);
+            }
+        }
+        // Other apps opens the fold and shows its row, also when it is already open.
+        let folded = view.render().rows.len();
+        assert!(view.reveal(MORE));
+        let rows = view.render().rows;
+        assert!(rows.len() > folded);
+        let fold = rows.iter().position(|r| r.key == MORE).unwrap() as i32;
+        assert_eq!(view.revealed(MORE), fold);
+        assert!(!view.reveal(MORE));
+        assert_eq!(view.revealed(MORE), fold);
+        // An app in the fold, e.g. a swap bar's: the fold opens and its row is selected.
+        let mut view = View::default();
+        let s = crate::sample::snapshot();
+        let last = view.sort.apply(&s.apps).last().unwrap().key.clone();
+        view.update(s);
+        assert!(view.reveal(&last));
+        assert_eq!(view.render().selected.map(|s| s.key), Some(last));
+        // Six apps: the bar names five and has Other apps, but the table has no fold to open.
+        let mut s = crate::sample::snapshot();
+        s.apps.truncate(NAMED + 1);
+        let shown = View::default().update(s);
+        let other = slint::Model::iter(&shown.memory.segments)
+            .find(|s| s.kind == SegmentKind::Other && s.name == "Other apps")
+            .unwrap();
+        assert_eq!(other.key, "");
     }
 
     #[test]

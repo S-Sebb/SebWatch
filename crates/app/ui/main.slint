@@ -23,6 +23,9 @@ export struct Segment {
     notes: [string],
     // The tooltip in one line, for screen readers.
     description: string,
+    // A click's target: the app's row key, the "N more apps" fold's for Other apps, empty for
+    // a section that does nothing.
+    key: string,
 }
 
 export struct Bar {
@@ -190,6 +193,26 @@ component FocusTip inherits AboutTip {
     y: self.tip.y;
 }
 
+// A bar's section as a screen reader's list item.
+component SectionItem {
+    in property <Segment> segment;
+    in property <int> index;
+    width: 100%;
+    height: 100%;
+    accessible-role: list-item;
+    accessible-label: self.segment.detail == "" ? self.segment.name : self.segment.name + " " + self.segment.detail;
+    accessible-description: self.segment.description;
+    accessible-item-index: self.index;
+}
+
+// A section a click acts on (`Segment.key`): only these offer screen readers a default action.
+component PickableSection inherits SectionItem {
+    callback picked();
+    accessible-action-default => {
+        root.picked();
+    }
+}
+
 component SegmentBar {
     in property <[Segment]> segments;
     in property <string> note;
@@ -197,6 +220,8 @@ component SegmentBar {
     in property <length> gap: 2px;
     property <length> share: self.width - (self.segments.length - 1) * self.gap;
     property <int> hovered: -1;
+    // A section with a key (`Segment.key`) clicked.
+    callback picked(string);
     height: 28px;
     // A list of parts, so it carries over to another chart.
     accessible-role: list;
@@ -246,10 +271,17 @@ component SegmentBar {
     for s[i] in root.segments: Rectangle {
             x: s.start * root.share + i * root.gap;
             width: s.fraction * root.share;
-            accessible-role: list-item;
-            accessible-label: s.detail == "" ? s.name : s.name + " " + s.detail;
-            accessible-description: s.description;
-            accessible-item-index: i;
+            if s.key == "": SectionItem {
+                segment: s;
+                index: i;
+            }
+            if s.key != "": PickableSection {
+                segment: s;
+                index: i;
+                picked => {
+                    root.picked(s.key);
+                }
+            }
             if touch.has-hover: Rectangle {
                 x: Theme.picnic ? -4px : -3px;
                 y: self.x;
@@ -277,7 +309,14 @@ component SegmentBar {
                     }
                 }
             }
-            touch := TouchArea { }
+            touch := TouchArea {
+                mouse-cursor: s.key == "" ? MouseCursor.default : MouseCursor.pointer;
+                clicked => {
+                    if s.key != "" {
+                        root.picked(s.key);
+                    }
+                }
+            }
 
             Tooltip {
                 TipCard {
@@ -565,6 +604,7 @@ component BarView {
     // The swap bar: the ⓘ button and the pressure chip after the title.
     in property <bool> explained;
     in property <SwapInfo> info;
+    callback picked <=> segments.picked;
     vertical-stretch: 0;
     VerticalLayout {
         spacing: 5px;
@@ -589,7 +629,7 @@ component BarView {
                 @children
             }
         }
-        SegmentBar {
+        segments := SegmentBar {
             title: root.bar.title + ", " + root.bar.total;
             segments: root.bar.segments;
             note: root.bar.note;
@@ -1782,15 +1822,36 @@ component Table {
 
     // Scrolls the focused row into view.
     function reveal() {
-        if root.current < 0 {
+        root.reveal-row(root.current);
+    }
+
+    // Scrolls row `i` into the list's view; none for -1.
+    public function reveal-row(i: int) {
+        if i < 0 {
             return;
         }
-        if root.current * root.row-height + view.content-y < 0 {
-            view.content-y = -root.current * root.row-height;
+        if root.row-y(i) + view.content-y < 0 {
+            view.content-y = -root.row-y(i);
         }
-        if (root.current + 1) * root.row-height + view.content-y > view.visible-height {
-            view.content-y = view.visible-height - (root.current + 1) * root.row-height;
+        if root.row-y(i) + root.row-h(i) + view.content-y > view.visible-height {
+            view.content-y = view.visible-height - root.row-y(i) - root.row-h(i);
         }
+    }
+
+    // Row `i`'s top, in the window.
+    public pure function row-top(i: int) -> length {
+        view.absolute-position.y + root.row-y(i) + view.content-y
+    }
+
+    // Every row is `row-height` high but the focused remainder row, `tall`, which shows its
+    // explanation below (`RowView.show-tip`) and reports the extra height.
+    property <int> tall: root.current >= 0 && scope.has-focus && root.keyboard && root.rows[root.current].tip != "" ? root.current : -1;
+    property <length> tall-extra;
+    pure function row-y(i: int) -> length {
+        i * root.row-height + (root.tall >= 0 && root.tall < i ? root.tall-extra : 0)
+    }
+    public pure function row-h(i: int) -> length {
+        root.row-height + (i == root.tall ? root.tall-extra : 0)
     }
 
     function press(key: TableKey) {
@@ -2157,6 +2218,11 @@ component Table {
                     index: i;
                     selected: i == root.current;
                     focused: i == root.current && scope.has-focus && root.keyboard;
+                    changed height => {
+                        if self.focused {
+                            root.tall-extra = self.height - root.row-height;
+                        }
+                    }
                     clicked => {
                         root.keyboard = false;
                         scope.focus();
@@ -2303,6 +2369,10 @@ export component MainWindow inherits Window {
     in-out property <string> search;
     callback pick(int);
     callback key(TableKey);
+    // A click on a bar's section, by its key: selects or deselects its app's row, or opens the
+    // fold (#88). Gives the row to scroll to, -1 for none.
+    callback bar-picked(string) -> int;
+    callback deselect();
     // A click on a column's header, 0 for RAM in use.
     callback sort-clicked(int);
     // The search field's new text.
@@ -2315,6 +2385,27 @@ export component MainWindow inherits Window {
     property <int> asking;
     property <int> asking-kill: 1;
     property <int> asking-end: 2;
+
+    // The model selects the row or opens the fold; then the table, and in a short window the
+    // page, scroll to its row.
+    function pick-section(key: string) {
+        // Not under the End or Kill question: answering it acts on the selected row.
+        if root.asking != 0 {
+            return;
+        }
+        let i = root.bar-picked(key);
+        if i < 0 {
+            return;
+        }
+        table.reveal-row(i);
+        let top = table.row-top(i) - page.absolute-position.y;
+        let lowest = page.visible-height - page.content-height;
+        if top < 0 {
+            page.content-y = min(0, page.content-y - top);
+        } else if top + table.row-h(i) > page.visible-height {
+            page.content-y = max(lowest, page.content-y - (top + table.row-h(i) - page.visible-height));
+        }
+    }
 
     function ask-end() {
         if root.end-asks {
@@ -2372,6 +2463,10 @@ export component MainWindow inherits Window {
             }
             if event.text == Key.Escape && root.search != "" {
                 table.clear-search();
+                return accept;
+            }
+            if event.text == Key.Escape && root.current >= 0 {
+                root.deselect();
                 return accept;
             }
             reject
@@ -2453,6 +2548,9 @@ export component MainWindow inherits Window {
                             inset: root.bars-inset;
                             BarView {
                                 bar: root.memory;
+                                picked(key) => {
+                                    root.pick-section(key);
+                                }
                                 // Hangs 6 px into the card's inset.
                                 Rectangle {
                                     width: 30px;
@@ -2471,6 +2569,9 @@ export component MainWindow inherits Window {
                             }
                             BarView {
                                 bar: root.swap;
+                                picked(key) => {
+                                    root.pick-section(key);
+                                }
                                 explained: true;
                                 info: root.swap-info;
                             }
@@ -2480,6 +2581,9 @@ export component MainWindow inherits Window {
                             }
                             if root.has-vram: BarView {
                                 bar: root.vram;
+                                picked(key) => {
+                                    root.pick-section(key);
+                                }
                             }
                         }
                     }

@@ -48,3 +48,5 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   file: that sets a default that clashes with System Monitor's and that unbinding can't take back.
 - **Bar sizes:** every section's size is in the legend; wide sections also show it inside the
   bar (mockup approved, #87). Seb, 2026-11-25.
+- **Clicking a bar section:** an app's section selects and scrolls to its row; Other apps
+  expands the fold; other sections do nothing (mockup approved, #88). Seb, 2026-11-25.
