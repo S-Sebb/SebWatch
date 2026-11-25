@@ -17,36 +17,47 @@ const ROW_ICON: f32 = 22.0;
 
 pub struct Icons {
     loaded: HashMap<String, Image>,
-    /// The row's icon size in device pixels.
-    px: u32,
+    /// The window's scale factor.
+    scale: f32,
 }
 
 impl Default for Icons {
     fn default() -> Self {
         Icons {
             loaded: HashMap::new(),
-            px: ROW_ICON as u32,
+            scale: 1.0,
         }
     }
 }
 
+/// An icon's size: in device pixels, and the scale of the theme folders that fit it best.
+#[derive(Clone, Copy)]
+struct Want {
+    px: u32,
+    scale: u32,
+}
+
 impl Icons {
-    /// Follows the window's scale factor, loading the icons again when it changes.
-    pub fn scale(&mut self, scale_factor: f32) {
-        let px = (ROW_ICON * scale_factor).round() as u32;
-        if px != self.px {
-            self.px = px;
+    /// Follows the window's scale factor, loading the icons again when it changes; whether it did.
+    pub fn scale(&mut self, scale_factor: f32) -> bool {
+        let changed = scale_factor != self.scale;
+        if changed {
+            self.scale = scale_factor;
             self.loaded.clear();
         }
+        changed
     }
 
     pub fn get(&mut self, icon: &str) -> Image {
-        let px = self.px;
+        let want = Want {
+            px: (ROW_ICON * self.scale).round() as u32,
+            scale: self.scale.ceil().max(1.0) as u32,
+        };
         self.loaded
             .entry(icon.to_string())
             .or_insert_with(|| {
-                find(icon, px)
-                    .and_then(|path| load(&path, px))
+                find(icon, want)
+                    .and_then(|path| load(&path, want.px))
                     .unwrap_or_else(generic)
             })
             .clone()
@@ -80,15 +91,12 @@ fn shrink(
     height: u32,
 ) -> SharedPixelBuffer<Rgba8Pixel> {
     let (src_w, src_h) = (pixels.width() as usize, pixels.height() as usize);
-    let src: Vec<[f32; 4]> = pixels
-        .as_slice()
-        .iter()
-        .map(|p| [p.r, p.g, p.b, p.a].map(f32::from))
-        .collect();
-    // Rows first, then columns.
-    let wide = average(&src, src_w, src_h, width as usize, 1, src_w);
+    let src = pixels.as_slice();
+    // Rows first, then columns: floats only for the narrowed image.
+    let byte = |k: usize| [src[k].r, src[k].g, src[k].b, src[k].a].map(f32::from);
+    let wide = average(byte, src_w, src_h, width as usize, 1, src_w);
     let out = average(
-        &wide,
+        |k| wide[k],
         src_h,
         width as usize,
         height as usize,
@@ -107,11 +115,11 @@ fn shrink(
     buffer
 }
 
-/// Shrinks `lines` lines of `len` values each to `new_len` values, by area. A line's values are
-/// `step` apart and lines `stride` apart; the result keeps the layout with `new_len` in place of
+/// Shrinks `lines` lines of `len` values each, read with `src`, to `new_len` values, by area. A
+/// line's values are `step` apart and lines `stride` apart; the result keeps the layout with `new_len` in place of
 /// `len`.
 fn average(
-    src: &[[f32; 4]],
+    src: impl Fn(usize) -> [f32; 4],
     len: usize,
     lines: usize,
     new_len: usize,
@@ -127,7 +135,7 @@ fn average(
             let mut sum = [0.0; 4];
             for j in start as usize..(end.ceil() as usize).min(len) {
                 let weight = (end.min(j as f32 + 1.0) - start.max(j as f32)).max(0.0);
-                let value = src[line * stride + j * step];
+                let value = src(line * stride + j * step);
                 for c in 0..4 {
                     sum[c] += value[c] * weight;
                 }
@@ -143,7 +151,7 @@ fn generic() -> Image {
     Image::load_from_svg_data(include_bytes!("../icons/generic-app.svg")).expect("a valid SVG")
 }
 
-fn find(icon: &str, px: u32) -> Option<PathBuf> {
+fn find(icon: &str, want: Want) -> Option<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
@@ -153,21 +161,28 @@ fn find(icon: &str, px: u32) -> Option<PathBuf> {
     let mut bases = vec![home.join(".icons"), data_home.join("icons")];
     bases.extend(data_dirs.split(':').map(|d| Path::new(d).join("icons")));
 
+    lookup(icon, want, &bases, &themes(user_theme(&home), &bases))
+}
+
+/// The themes to look in, in order: the user's, those it inherits, Breeze, then hicolor. As in
+/// KDE, hicolor comes last even when a theme inherits it, so it doesn't shadow Breeze or a theme
+/// inherited after it.
+fn themes(user: Option<String>, bases: &[PathBuf]) -> Vec<String> {
     let mut themes = Vec::new();
-    if let Some(theme) = user_theme(&home) {
-        inherited(&theme, &bases, &mut themes);
+    if let Some(theme) = user {
+        inherited(&theme, bases, &mut themes);
     }
     for theme in ["breeze", "hicolor"] {
         if !themes.iter().any(|t| t == theme) {
             themes.push(theme.into());
         }
     }
-    lookup(icon, px, &bases, &themes)
+    themes
 }
 
-/// `theme` and the themes its `index.theme` inherits, depth first, each once.
+/// `theme` and the themes its `index.theme` inherits, depth first, each once, but not hicolor.
 fn inherited(theme: &str, bases: &[PathBuf], themes: &mut Vec<String>) {
-    if themes.iter().any(|t| t == theme) {
+    if theme == "hicolor" || themes.iter().any(|t| t == theme) {
         return;
     }
     themes.push(theme.into());
@@ -179,14 +194,16 @@ fn inherited(theme: &str, bases: &[PathBuf], themes: &mut Vec<String>) {
             .find_map(|line| line.strip_prefix("Inherits="))
             .map(str::to_string)
     });
-    for parent in parents.iter().flat_map(|p| p.split(',')) {
-        inherited(parent.trim(), bases, themes);
+    for parent in parents.iter().flat_map(|p| p.split(',')).map(str::trim) {
+        if !parent.is_empty() {
+            inherited(parent, bases, themes);
+        }
     }
 }
 
-/// `icon` at `px` device pixels in the themes under the bases, in order, then in pixmaps; `None`
-/// for core's service icon, so an app without an icon of its own gets the shipped one.
-fn lookup(icon: &str, px: u32, bases: &[PathBuf], themes: &[String]) -> Option<PathBuf> {
+/// `icon` at the wanted size in the themes under the bases, in order, then in pixmaps; `None` for
+/// core's service icon, so an app without an icon of its own gets the shipped one.
+fn lookup(icon: &str, want: Want, bases: &[PathBuf], themes: &[String]) -> Option<PathBuf> {
     if icon == SERVICE_ICON {
         return None;
     }
@@ -195,7 +212,7 @@ fn lookup(icon: &str, px: u32, bases: &[PathBuf], themes: &[String]) -> Option<P
     }
     for theme in themes {
         for base in bases {
-            if let Some(path) = in_theme(&base.join(theme), icon, px) {
+            if let Some(path) = in_theme(&base.join(theme), icon, want) {
                 return Some(path);
             }
         }
@@ -216,11 +233,12 @@ fn user_theme(home: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The icon in a theme laid out as size/category or category/size, as Plasma would draw it at
-/// `px` device pixels: one from an `apps` folder first, then scalable, then the smallest bitmap
-/// at least `px`, then the largest smaller one.
-fn in_theme(theme: &Path, icon: &str, px: u32) -> Option<PathBuf> {
-    let mut best: Option<((bool, i64), PathBuf)> = None;
+/// The icon in a theme laid out as size/category or category/size, as KDE would draw it at the
+/// wanted size: one from an `apps` folder first, then one from a folder of the wanted scale
+/// (`48x48@2x`), then scalable, then the smallest bitmap at least the wanted device pixels, then
+/// the largest smaller one.
+fn in_theme(theme: &Path, icon: &str, want: Want) -> Option<PathBuf> {
+    let mut best: Option<((bool, bool, i64), PathBuf)> = None;
     for outer in std::fs::read_dir(theme).ok()?.flatten() {
         for inner in std::fs::read_dir(outer.path())
             .into_iter()
@@ -233,13 +251,16 @@ fn in_theme(theme: &Path, icon: &str, px: u32) -> Option<PathBuf> {
                     continue;
                 }
                 let apps = path.components().any(|c| c.as_os_str() == "apps");
-                let size = size_of(&path) as i64;
-                let fit = match () {
-                    _ if ext == "svg" => i64::MAX,
-                    _ if size >= px as i64 => i64::MAX / 2 - size,
-                    _ => size,
+                let (size, scale) = size_of(path.strip_prefix(theme).unwrap_or(&path));
+                let px = i64::from(size * scale);
+                let fit = if ext == "svg" {
+                    i64::MAX
+                } else if px >= i64::from(want.px) {
+                    i64::MAX / 2 - px
+                } else {
+                    px
                 };
-                let rank = (apps, fit);
+                let rank = (apps, scale == want.scale, fit);
                 if best.as_ref().is_none_or(|(r, _)| rank > *r) {
                     best = Some((rank, path));
                 }
@@ -263,22 +284,28 @@ fn usable(path: &Path) -> bool {
     })
 }
 
-/// The size in device pixels from a directory such as `48x48`, `48` or `48@2x` (96), 0 if none.
-fn size_of(path: &Path) -> u32 {
-    path.components()
-        .filter_map(|c| {
-            let name = c.as_os_str().to_str()?;
-            let (size, scale) = name.split_once('@').unwrap_or((name, "1x"));
-            let size: u32 = size.split('x').next()?.parse().ok()?;
-            Some(size * scale.strip_suffix('x')?.parse::<u32>().ok()?)
-        })
-        .max()
-        .unwrap_or(0)
+/// The size and scale from folders such as `48x48`, `48`, `48@2x` or `scalable@2x`: size 0 if
+/// none, scale 1 if none.
+fn size_of(path: &Path) -> (u32, u32) {
+    let mut found = (0, 1);
+    for name in path.components().filter_map(|c| c.as_os_str().to_str()) {
+        let (size, scale) = name.split_once('@').unwrap_or((name, "1x"));
+        if let Some(scale) = scale.strip_suffix('x').and_then(|s| s.parse().ok()) {
+            found.1 = found.1.max(scale);
+        }
+        if let Some(size) = size.split('x').next().and_then(|s| s.parse().ok()) {
+            found.0 = found.0.max(size);
+        }
+    }
+    found
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The row's icon on a 1× screen.
+    const ONE_X: Want = Want { px: 22, scale: 1 };
 
     #[test]
     fn prefers_a_full_colour_app_icon() {
@@ -295,30 +322,59 @@ mod tests {
         write("scalable/apps/dark.svg", symbolic);
         write("scalable/apps/game.svg", embedded);
         assert_eq!(
-            in_theme(&theme, "term", 22),
+            in_theme(&theme, "term", ONE_X),
             Some(theme.join("scalable/apps/term.svg"))
         );
-        assert_eq!(in_theme(&theme, "dark", 22), None);
-        assert_eq!(in_theme(&theme, "game", 22), None);
+        assert_eq!(in_theme(&theme, "dark", ONE_X), None);
+        assert_eq!(in_theme(&theme, "game", ONE_X), None);
         std::fs::remove_dir_all(&theme).unwrap();
     }
 
     #[test]
-    fn takes_the_bitmap_plasma_would_draw_at_the_rows_size() {
-        // Steam's hicolor PNGs, and a 16 px one for a 2x screen.
+    fn takes_the_bitmap_kde_would_draw_at_the_rows_size() {
+        // Steam's hicolor PNGs, and a 16 px one for 2× screens.
         let theme = std::env::temp_dir().join(format!("sebwatch-sizes-{}", std::process::id()));
-        for dir in ["16x16", "24x24", "256x256", "16x16@2x"] {
-            let path = theme.join(dir).join("apps/steam.png");
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, "").unwrap();
-        }
-        let found = |px| in_theme(&theme, "steam", px).unwrap();
+        let write = |dirs: &[&str]| {
+            let _ = std::fs::remove_dir_all(&theme);
+            for dir in dirs {
+                let path = theme.join(dir).join("apps/steam.png");
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "").unwrap();
+            }
+        };
+        let found = |px, scale| in_theme(&theme, "steam", Want { px, scale }).unwrap();
+        write(&["16x16", "24x24", "256x256"]);
         // The smallest at least as large; the largest when all are smaller.
-        assert_eq!(found(22), theme.join("24x24/apps/steam.png"));
-        assert_eq!(found(32), theme.join("16x16@2x/apps/steam.png"));
-        assert_eq!(found(44), theme.join("256x256/apps/steam.png"));
-        assert_eq!(found(512), theme.join("256x256/apps/steam.png"));
+        assert_eq!(found(22, 1), theme.join("24x24/apps/steam.png"));
+        assert_eq!(found(44, 2), theme.join("256x256/apps/steam.png"));
+        assert_eq!(found(512, 1), theme.join("256x256/apps/steam.png"));
+        // A folder of the screen's scale first, then unscaled ones.
+        write(&["16x16@2x", "48x48"]);
+        assert_eq!(found(22, 1), theme.join("48x48/apps/steam.png"));
+        assert_eq!(found(44, 2), theme.join("16x16@2x/apps/steam.png"));
         std::fs::remove_dir_all(&theme).unwrap();
+    }
+
+    #[test]
+    fn hicolor_comes_after_the_inherited_themes_and_breeze() {
+        let base = std::env::temp_dir().join(format!("sebwatch-themes-{}", std::process::id()));
+        let write = |path: &str, text: &str| {
+            let path = base.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "Fluent-dark/index.theme",
+            "[Icon Theme]\nInherits=hicolor, Adwaita,\n",
+        );
+        write("Adwaita/scalable/apps/term.svg", "<svg/>");
+        write("hicolor/scalable/apps/term.svg", "<svg/>");
+        let bases = [base.clone()];
+        let themes = themes(Some("Fluent-dark".into()), &bases);
+        let found = lookup("term", ONE_X, &bases, &themes);
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(themes, ["Fluent-dark", "Adwaita", "breeze", "hicolor"]);
+        assert_eq!(found, Some(base.join("Adwaita/scalable/apps/term.svg")));
     }
 
     #[test]
@@ -345,7 +401,7 @@ mod tests {
         std::fs::write(&file, "<svg/>").unwrap();
         let found = lookup(
             SERVICE_ICON,
-            22,
+            ONE_X,
             std::slice::from_ref(&base),
             &["breeze".into()],
         );
