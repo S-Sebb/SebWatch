@@ -28,8 +28,9 @@ Every release ships with patch notes.
 - Win+Esc on KDE Plasma: the rpm's scriptlets run `sebwatch --bind-win-esc` on install and
   `--unbind-win-esc` on removal in the Plasma session of the user who ran `sudo dnf`;
   `scripts/install` and `scripts/uninstall` do the same into `~/.local`. The AppImage binds only
-  when run with `--bind-win-esc`. `scripts/test-win-esc` checks it on a headless KWin with its
-  own D-Bus session and HOME, leaving the desktop and its shortcuts alone.
+  when run with `--bind-win-esc`. Binding takes effect at once, without logging out.
+  `scripts/test-win-esc` checks it (the shortcut active, not only recorded) on a headless KWin
+  with its own D-Bus session and HOME, leaving the desktop and its shortcuts alone.
 - To build and test both without a release, run the workflow by hand (Actions, `Release
   packages`, Run workflow): the packages stay as that run's artifacts. A PR that changes the
   packaging runs it too.

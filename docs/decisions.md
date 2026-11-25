@@ -42,3 +42,7 @@ Settled; don't ask again. One line each with the reason. Add a line when Seb set
   Explanations on headers and tiles are one short sentence each, concise and clear, without
   "not X" asides such as "not disk space" (#41). VRAM is "dedicated GPU memory", never
   "NVIDIA GPU memory".
+- **Win+Esc binds through KGlobalAccel's `setShortcut` with SetPresent (#85):** a foreign
+  shortcut (`setForeignShortcut`) is recorded but stays inactive, so the key does nothing until
+  the next login; marking it present makes it work at once. Not `X-KDE-Shortcuts` in the desktop
+  file: that sets a default that clashes with System Monitor's and that unbinding can't take back.
