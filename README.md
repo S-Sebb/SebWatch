@@ -62,13 +62,13 @@ Each [release](https://github.com/S-Sebb/SebWatch/releases) has two packages:
   and remove it with `sudo dnf remove sebwatch`:
 
   ```sh
-  sudo dnf install https://github.com/S-Sebb/SebWatch/releases/download/v0.2.0/sebwatch-0.2.0-1.x86_64.rpm
+  sudo dnf install https://github.com/S-Sebb/SebWatch/releases/download/v0.2.1/sebwatch-0.2.1-1.x86_64.rpm
   ```
 
 - **Any other distribution:** the AppImage. Make it executable and run it:
 
   ```sh
-  chmod +x SebWatch-0.2.0-x86_64.AppImage && ./SebWatch-0.2.0-x86_64.AppImage
+  chmod +x SebWatch-0.2.1-x86_64.AppImage && ./SebWatch-0.2.1-x86_64.AppImage
   ```
 
 Or build it from a checkout:
@@ -89,7 +89,7 @@ Pressing it again while SebWatch is open brings its window to the front. `script
 the AppImage, or to change it by hand:
 
 ```sh
-sebwatch --bind-win-esc      # the AppImage: ./SebWatch-0.2.0-x86_64.AppImage --bind-win-esc
+sebwatch --bind-win-esc      # the AppImage: ./SebWatch-0.2.1-x86_64.AppImage --bind-win-esc
 sebwatch --unbind-win-esc    # before removing it, to give Win+Esc back to System Monitor
 ```
 
